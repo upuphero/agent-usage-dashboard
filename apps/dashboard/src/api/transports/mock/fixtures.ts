@@ -2,6 +2,7 @@ import {
   API_VERSION, type CostEstimate, type Metric, type ProviderSummary, type SessionItem,
   type TokenMetrics, type UsageAggregate,
 } from '../../generated/usage';
+import { version as appVersion } from '../../../../package.json';
 
 export const DEMO_TIMEZONE = 'America/Phoenix';
 export const DEMO_DATE = '2026-10-04';
@@ -109,6 +110,6 @@ export const SESSIONS: SessionItem[] = [
   { sessionId: 'demo-session-02', providerId: 'ccusage.codex', productId: 'codex', sourceDatasetId: 'demo-dataset-codex', originDeviceId: 'demo-local-device', modelId: 'demo-codex-model', modelVendor: 'OpenAI', startedAt: '2026-09-28T14:20:00Z', lastActivityAt: '2026-10-03T21:14:00Z', usage: CODEX_USAGE },
 ];
 export const DEMO_API_INFO = {
-  apiVersion: API_VERSION, appVersion: '0.0.4',
+  apiVersion: API_VERSION, appVersion,
   capabilities: ['overview', 'sessions', 'scan-polling', 'export-json-full-history', 'export-csv', 'demo-data', 'settings-read', 'settings-write', 'source-directory-selection'],
 };

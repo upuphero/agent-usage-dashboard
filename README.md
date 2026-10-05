@@ -1,21 +1,197 @@
 # Agent Usage Dashboard
 
-**0.0.4：无使用日期补零并连续绘图，模型按 token/估算成本降序，未使用与明细不足项默认折叠。** 两平台免费 Actions 已通过，Windows 提供解压即用 ZIP 和 NSIS，Mac 提供 ARM64 DMG。图形优先、紧凑筛选、中文量级及三来源历史继续保留。[最新构建与使用](docs/ci-validation/0.0.4-zero-periods-model-ranking.md) · [来源范围](docs/ci-validation/0.0.2-codex-antigravity.md) · [流水线](docs/GITHUB_ACTIONS.md)
+在本机查看 **Claude Code、OpenAI Codex 和 Antigravity** 的 token 用量、API 等价估算成本与会话记录。
 
-Windows x64 / macOS Apple Silicon ARM64 的本地 AI 用量桌面应用。Tauri 2 + React/TypeScript + Rust Core + SQLite + 锁定 ccusage sidecar；不开发 Intel Mac。
+Track local AI agent usage on Windows and macOS.
 
-开发状态：API 1.1.0 保持兼容，已接入 Claude Code、Codex、Antigravity。CI 已通过前端 44、Node/SQL 16、Linux Rust 39、两平台各 56 个默认及 4 个 native Rust tests、严格 clippy、安装/免安装解压后再次执行的 4 个 native tests。Windows ZIP 5.52 MiB / NSIS 4.01 MiB / Mac DMG 5.01 MiB。新后端已在本机只读扫描真实 Codex/Antigravity，两个来源 succeeded，私人用量未上传。真实 GUI 全流程、最低 OS、完整依赖 notices 和正式签名仍待验收；本机 MSVC/SDK 未安装。
+[![Desktop packages](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml/badge.svg)](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml) [![Version](https://img.shields.io/badge/version-0.0.5-75d9c4)](docs/ci-validation/0.0.5-local-time.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Windows 免安装：先退出旧版，解压整个 portable.zip，双击 usage-desktop.exe，并保留同目录 ccusage.exe。进入数据来源分别点击 Codex/Antigravity 的“启用并扫描”；默认目录找不到时在设置选择目录。默认显示最近 30 天；未扫描与未知字段显示不可用，不冒充零。需要系统已有 WebView2；配置/缓存仍保存到用户应用数据目录，与安装版共享历史。
+**Windows x64 · macOS Apple Silicon ARM64 · 本地存储 · 默认离线采集**
+
+[下载安装](#下载安装) · [快速开始](#快速开始) · [数据来源与统计口径](#数据来源与统计口径) · [开发指南](#开发指南) · [路线图](#路线图)
+
+![用量概览：每日趋势、token 分项与估算成本，使用合成演示数据](docs/images/overview.jpg)
+
+*截图来自应用的浏览器演示模式，使用合成用量、示例模型和示例价格，不包含个人日志。*
+
+## 主要功能
+
+| 功能 | 可以做什么 |
+| --- | --- |
+| 用量趋势 | 按日、周、月查看用量，切换曲线图与柱状图，悬停查看完整数值 |
+| 来源与模型分布 | 比较不同 Agent 和模型的用量，按 token 或估算成本降序排列 |
+| 会话记录 | 查看来源、模型、累计 token、最后活动时间与可获得的元数据 |
+| 数据来源管理 | 启用或关闭来源、选择日志目录、手动扫描、查看状态与覆盖范围 |
+| 数据质量说明 | 区分来源报告、推导、估算与不可用字段，保留缺失价格和部分覆盖提示 |
+| 导出 | 导出 JSON 完整历史归档或当前筛选范围的 CSV 报表 |
+| 显示与统计设置 | 深色、浅色、跟随系统主题；来源开关与统计时区持久化 |
+
+**0.0.5 更新：** 新配置默认采用系统本地时区。旧版本留下的 UTC 默认配置会在升级时迁移，并自动重新扫描已启用来源，从原始日志重新计算当地日期的用量。[查看更新与验证记录](docs/ci-validation/0.0.5-local-time.md)
+
+## 下载安装
+
+当前为 **早期测试版本**。已提供 Windows 安装包、Windows 便携包和 macOS ARM64 DMG；Intel Mac、Linux 桌面及 Windows ARM64 暂不提供安装包。
+
+### 获取测试包
+
+1. 登录 GitHub，打开 [Desktop packages 构建列表](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml)。
+2. 选择最新一次 **成功完成** 的构建。
+3. 在页面底部的 **Artifacts** 中下载 `desktop-installers-<commit-sha>`。
+4. 解压后，根据系统选择安装包；其中同时包含 `SHA256SUMS`、大小报告与构建验证信息。
+
+| 系统 | 文件名格式 | 使用方式 |
+| --- | --- | --- |
+| Windows x64 | `Agent Usage Dashboard_<version>_x64-setup.exe` | 运行 NSIS 安装程序 |
+| Windows x64 | `Agent Usage Dashboard_<version>_x64-portable.zip` | 完整解压后运行 `usage-desktop.exe` |
+| macOS Apple Silicon | `Agent Usage Dashboard_<version>_aarch64.dmg` | 打开 DMG，将应用复制到 Applications |
+
+> Actions 下载需要登录 GitHub，产物仅保留 **1 天**，过期后需等待新的成功构建或从源码构建。[GitHub 下载说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
+>
+> 当前 [Releases](https://github.com/upuphero/agent-usage-dashboard/releases) 中的 `v0.0.1` 是源码预览。较新的测试安装包在 Actions 中分发，工作流不会自动创建 Release。
+
+Windows 运行需要 **WebView2 Runtime**。NSIS 安装器包含下载引导，便携版依赖系统已安装的 WebView2。安装包已内置采集器，使用者无需另装 Node.js、Rust 或 ccusage。
+
+Windows 包当前未签名；macOS 使用 ad-hoc 签名，尚未完成 Developer ID 签名与公证。真实 GUI 全流程、干净机安装、最低系统版本和用户数据升级场景仍待完整验收。[0.0.5 构建证据](docs/ci-validation/0.0.5-local-time.md)
+
+## 快速开始
+
+1. 启动应用，进入 **Providers / 数据来源**。
+2. 对需要统计的工具点击 **启用并扫描**。初次启动时，所有来源默认关闭。
+3. 默认目录未找到时，进入 **Settings / 设置**，为相应来源选择本机日志目录，保存后重新扫描。
+4. 回到 **Overview / 用量概览**，查看最近 30 天用量，也可切换今日、本周、本月以及来源、模型和图表粒度。
+5. 需要保存报表时，在设置页面导出 JSON 或 CSV。
+
+日常采集目前通过手动完整扫描触发。**刷新视图**重新读取缓存中的统计；采集新产生的用量请点击来源卡片上的 **扫描来源**。扫描失败时保留上次成功结果并提示状态。
+
+安装版与便携版共享系统用户应用数据目录中的配置和历史。升级前先退出旧程序；使用便携包时请完整解压，保留同目录的 `ccusage.exe` 和许可文件。
+
+<details>
+<summary>界面预览：来源管理</summary>
+
+管理来源开关、目录和扫描状态，并查看每个来源的报表能力与覆盖范围。
+
+![来源管理：Claude Code、OpenAI Codex 和 Antigravity 的演示状态](docs/images/providers.jpg)
+
+</details>
+
+<details>
+<summary>界面预览：会话记录</summary>
+
+查看会话累计用量、模型与最后活动时间；截图中的会话均为合成示例。
+
+![会话记录：合成会话的累计 token、估算成本和最后活动时间](docs/images/sessions.jpg)
+
+</details>
+
+## 数据来源与统计口径
+
+| 来源 | 当前读取范围 | 说明 |
+| --- | --- | --- |
+| Claude Code | 本机 Claude Code 用量日志，通常位于 `~/.claude/projects` | 支持每日和会话报表，按实际日志提供模型与 token 字段 |
+| OpenAI Codex | 本机 `.codex/sessions` 与 `archived_sessions` | 仅统计保留在本机的会话；未记录的价格档位按标准档位估算 |
+| Antigravity | 已知格式的本机 conversation `.db` 数据库 | `.pb` 格式当前未支持；缺失的模型拆分保持不可用并提示覆盖限制 |
+
+来源解析与价格计算使用锁定版本的 [ccusage](https://github.com/ryoppippi/ccusage)，由 Rust Adapter 归一化后交给 Core 聚合。新增上游支持仍需在本项目中验证后接入。
+
+### 怎样理解这些数字
+
+- **范围是本机保留的日志。** 未保存或已清理的日志、其他设备的活动和未接入的网页产品不会自动计入。
+- **成本是 API 等价估算。** 它用于比较用量；订阅账单、剩余额度及官方扣费不在当前统计范围内。缺少价格时会显示不可用或已知部分。
+- **缺失与零分开处理。** 完整覆盖范围内没有使用记录的日期可补零；未扫描、缺字段或覆盖不完整的数据保留明确提示。
+- **会话展示累计用量。** 日期筛选用于寻找期间最后活跃的会话，表格仍展示全会话累计值；查看期间消费请使用每日趋势。
+- **日期按统计时区分组。** 新配置采用系统本地时区，之后使用已保存的设置。手动更改统计时区后需要重新扫描原始日志。
+- **字段以来源提供为准。** 推理输出属于输出总量的子集；来源或模型分布明细与总计也不应再次相加。
+
+### 本地存储与隐私
+
+采集命令以离线模式执行，仅提取用于统计的用量元数据，不采集认证文件，不保存或上传聊天正文。项目默认无遥测。
+
+配置与统计保存在系统用户应用数据目录的 `profile.json` 和 `usage.db` 中，使用 SQLite 持久化。来源必须由用户启用；目录选择只针对指定来源，关闭来源会保留已有历史。
+
+JSON 导出包含所选来源和时区的完整每日 / 会话历史及数据集身份；CSV 使用当前日期、来源和模型筛选。**归档导入、备份恢复界面和数据清除目前尚未开放。**
+
+## 开发指南
+
+### 工具链
+
+| 工具 | 项目固定版本 |
+| --- | --- |
+| Node.js | `24.19.0`，见 [.node-version](.node-version) |
+| pnpm | `9.15.0`，见 [package.json](package.json) |
+| Rust | `1.91.1`，见 [rust-toolchain.toml](rust-toolchain.toml) |
+
+桌面开发还需要对应平台的原生工具：Windows 的 MSVC C++ Build Tools 与 Windows SDK，或 macOS ARM64 的 Xcode Command Line Tools。具体准备方法见 [Tauri 2 官方前置要求](https://v2.tauri.app/start/prerequisites/)。浏览器演示只需要 Node.js 和 pnpm。
+
+### 浏览器演示
+
+```bash
+git clone https://github.com/upuphero/agent-usage-dashboard.git
+cd agent-usage-dashboard
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+打开 <http://127.0.0.1:1420/?client=mock>。浏览器模式使用合成数据，不访问本机日志，也不会真正扫描或导出文件；可在页面中切换部分覆盖、空数据、扫描失败等场景。
+
+如果 `1420` 端口被占用或被系统保留，可仅为浏览器演示指定其他端口：
+
+```bash
+pnpm --filter @usage/dashboard exec vite --host 127.0.0.1 --port 5173 --strictPort
+```
+
+然后打开 <http://127.0.0.1:5173/?client=mock>。桌面开发使用 Tauri 配置中的 `1420` 端口，修改时需同时保持 `devUrl` 一致。
+
+### 桌面开发与打包
+
+以下命令在仓库根目录执行，并要求当前主机与目标架构匹配。
+
+**Windows x64：**
+
+```powershell
+node scripts/prepare-ccusage.mjs --target x86_64-pc-windows-msvc
+pnpm desktop:dev
+```
+
+```powershell
+pnpm desktop:build --target=x86_64-pc-windows-msvc
+```
+
+**macOS Apple Silicon：**
+
+```bash
+node scripts/prepare-ccusage.mjs --target aarch64-apple-darwin
+pnpm desktop:dev
+```
+
+```bash
+pnpm desktop:build --target=aarch64-apple-darwin
+```
+
+完整构建会准备并验证锁定的采集器，随后生成本机平台的安装包。构建脚本拒绝跨目标、Intel Mac 和 universal 构建。原生测试、安装检查和 Actions 操作见 [CI 与打包指南](docs/GITHUB_ACTIONS.md)。
+
+### 项目结构
 
 ```text
-pnpm install --frozen-lockfile
+apps/dashboard/         React 界面、浏览器演示与客户端接口
+apps/desktop/           Tauri 宿主、原生命令与打包配置
+crates/usage-core/      统计、快照语义与业务用例
+crates/usage-adapters/  来源读取、采集进程与 SQLite 存储
+crates/usage-contracts/ 共享接口及 TypeScript 类型生成来源
+scripts/                契约、依赖边界、版本和安装包校验
+tests/fixtures/         合成来源日志与测试输入
+docs/                   架构、验证记录及界面截图
+```
+
+前端通过统一 `UsageClient` 使用 Tauri IPC 或 Mock 客户端。统计和快照规则集中在 Core，具体来源和存储由 Adapter 接入；共享 DTO 从 Rust 契约生成。[架构说明](docs/coordination/architecture.md) · [接口基线](docs/coordination/CONTRACT_BASELINE.md)
+
+### 检查与测试
+
+```bash
 pnpm contracts:check
 pnpm boundaries:check
 pnpm version:check
 pnpm scripts:test
 node --test crates/usage-adapters/tests/*.test.mjs
-pnpm dev
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -23,35 +199,30 @@ pnpm build
 cargo test -p usage-core -p usage-contracts -p usage-adapters --locked
 ```
 
-工具版本由 `.node-version`、`packageManager`、`rust-toolchain.toml` 与两个全局 lockfile 固定。Windows Rust/Tauri 需要已有 MSVC C++ Build Tools 与 Windows SDK；不自动安装系统组件。
+桌面端和采集器的原生集成测试还需要对应平台的编译工具与锁定采集器。[GitHub Actions](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml) 会在 Windows x64 和 macOS ARM64 上构建、实际安装 / 解压，并再次运行合成数据集成测试；两个目标通过后才提供集中产物和 SHA-256 校验值。
 
-```text
-pnpm desktop:build --local --target=x86_64-pc-windows-msvc
-pnpm desktop:build --target=x86_64-pc-windows-msvc
-pnpm desktop:build --target=aarch64-apple-darwin
-```
+## 路线图
 
-准备锁定资源：
+当前重点是把已实现的本地统计闭环补齐真实桌面与安装场景验收。后续功能包括：
 
-```text
-node scripts/prepare-ccusage.mjs --target x86_64-pc-windows-msvc
-node scripts/verify-sidecar.mjs --target x86_64-pc-windows-msvc
-node scripts/prepare-notices.mjs --check
-```
+- [ ] 定时扫描、日志监听与增量采集
+- [ ] 数据备份、恢复、清除和应用数据目录迁移
+- [ ] JSON 归档导入、去重、多设备管理与独立数据集切换
+- [ ] 系统时区变更自动跟随
+- [ ] 自定义日期范围与项目维度统计
+- [ ] 托盘、开机启动、通知和自动更新
+- [ ] Antigravity `.pb` 与更多来源的可采集性验证
+- [ ] 有可信来源的订阅额度与重置时间展示
+- [ ] 正式签名 / 公证及完整第三方依赖许可清单
 
-macOS 在 ARM64 主机使用对应 target。build 脚本拒绝跨目标、Intel Mac 与 universal。Windows 配置 NSIS + WebView2 下载引导；macOS 配置 ARM64 DMG + ad-hoc 开发签名，13.0 是暂定 deployment target，最低兼容系统仍待实测。macOS 使用官方文件映射保留已校验 sidecar 的上游签名与原始字节，运行期继续坚持锁中原始 SHA。
+ChatGPT Web、DeepSeek、Cowork 与可选同步属于后续路线，需要分别确认可获得的数据和统计口径。
 
-桌面首次启动在 Tauri 应用数据目录创建 `profile.json` 和 `usage.db`，扫描默认关闭。Settings 支持三个 Provider，目录引用绑定 Provider，版本冲突需重读，扫描中不能改配置。profile v1 → v2 保留 device/Claude dataset，为新增来源各自持久化 UUID；旧二进制不能读取新版 profile，需先退出旧版本。配置丢失而 DB 已存在时拒绝新身份。时区改变需重扫，旧 Daily 不会伪造重分桶。Mock 设置仅当前页面会话有效、不访问磁盘。
+## 参与贡献
 
-Codex 读取用户 .codex/sessions 与 archived_sessions；Antigravity 读取已知本机 conversation .db，当前锁定版本不支持 .pb，界面 warning 标明未纳入范围。冻结输入只含用量白名单元数据，不复制认证/用户配置/正文或整个数据库。源统计和价格使用固定 ccusage，公共聚合/快照替换仍只在 Core。费用为 API 等价估算，未记录的 Codex 档位按标准估算；未提供的模型拆分显示 unavailable。
+欢迎提交 [Issue](https://github.com/upuphero/agent-usage-dashboard/issues) 或 Pull Request。报告问题时请提供系统 / 架构、应用版本、来源工具和复现步骤；截图与诊断信息请先脱敏，避免提交认证文件、完整聊天日志或个人数据库。
 
-native 合成测试只读测试 fixture，不访问真实日志。在有编译工具的终端准备资源、设置 `CCUSAGE_TEST_BINARY` 为其绝对路径，再执行：
+新增来源应明确报表、字段和覆盖范围，并提供合成 fixture；缺失字段使用不可用状态。修改共享接口时，请从 `crates/usage-contracts` 重新生成类型，并运行契约与依赖边界检查。
 
-```text
-cargo test -p usage-adapters --test native_pipeline --locked -- --ignored
-cargo test -p usage-desktop --locked -- --ignored
-```
+## 许可证
 
-包内检查入口 `scripts/verify-bundle.mjs` 验证主程序架构、具体安装位置的 sidecar 哈希并运行同一套合成 fixture。[GitHub Actions](docs/GITHUB_ACTIONS.md) 使用 public repo 的免费标准 Windows x64/macOS ARM64 runner，代码/config 的 main push、PR、tag 或手动触发；先验证，再构建并从真实 NSIS/DMG 检查安装程序。两平台都成功才提供集中 artifact 和 SHA256SUMS，保留一天，不自动发布 Release。Windows 未签名，Mac 为 ad-hoc 签名，无 Developer ID/公证。
-
-协作入口：`docs/coordination/CONTRACT_BASELINE.md`、`architecture.md`；前端维护 `frontend.md`，数据维护 `data.md`。API 请求范围 `[start,end)`、token 字符串、未知值 null。Overview 只统计标准 Daily，Sessions 展示会话累计用量，禁止两个报表相加。费用始终是 API 等价估算成本。
+本项目源码采用 [MIT License](LICENSE)。采集器及第三方依赖的许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，完整依赖许可库存仍在整理。
