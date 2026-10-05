@@ -1,0 +1,1 @@
+{"type":"assistant","timestamp":"2026-10-04T08:00:00.000Z","sessionId":"session-b","requestId":"req-b1","message":{"id":"msg-b1","model":"synthetic-unpriced-model","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}

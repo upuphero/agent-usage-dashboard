@@ -1,0 +1,1 @@
+{ "identifier": "main-window", "description": "Local dashboard window with events only; no shell or filesystem plugin access.", "windows": ["main"], "permissions": ["core:event:default"] }

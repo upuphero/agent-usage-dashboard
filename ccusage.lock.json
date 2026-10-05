@@ -1,0 +1,53 @@
+{
+  "lockVersion": 1,
+  "version": "20.0.26",
+  "verifiedAt": "2026-10-04",
+  "sourceCommit": "d9821088b98aa536c7a385aa1a4579d6fa02269b",
+  "checksumSources": {
+    "npmMetadata": "https://registry.npmjs.org/ccusage/20.0.26",
+    "provenance": "https://registry.npmjs.org/-/npm/v1/attestations/ccusage@20.0.26",
+    "sourceTag": "https://github.com/ccusage/ccusage/tree/v20.0.26",
+    "binarySha256": "computed from integrity-verified tarballs on Windows x64; pinned here, never generated as expected values at build time"
+  },
+  "license": {
+    "spdx": "MIT",
+    "source": "https://registry.npmjs.org/ccusage/-/ccusage-20.0.26.tgz#package/LICENSE",
+    "packageIntegrity": "sha512-46TTmFKcuNyWbtqj8HZqWTmVQIsApvGO4xP+E2VL5NC/oMjdtHOv9svVTsHX1WQgetbNOV4GdvQGHLG22vXZgg=="
+  },
+  "commands": {
+    "daily": ["claude", "daily", "--json", "--offline", "--breakdown", "--mode", "calculate", "--order", "asc", "--timezone", "<IANA_ZONE>", "--config", "<EMPTY_CONFIG>"],
+    "session": ["claude", "session", "--json", "--offline", "--breakdown", "--mode", "calculate", "--order", "asc", "--timezone", "<IANA_ZONE>", "--config", "<EMPTY_CONFIG>"]
+  },
+  "schemaFixture": "tests/fixtures/claude-code",
+  "targets": {
+    "x86_64-pc-windows-msvc": {
+      "package": "@ccusage/ccusage-win32-x64",
+      "metadataUrl": "https://registry.npmjs.org/@ccusage%2fccusage-win32-x64/20.0.26",
+      "tarballUrl": "https://registry.npmjs.org/@ccusage/ccusage-win32-x64/-/ccusage-win32-x64-20.0.26.tgz",
+      "integrity": "sha512-YMmtsZn4QNDwjglTKI3dvIZIyfqNQjoMPvJRpt6EVcfNzP7z8+OdxYp6Vd8Zj1ZwjHkLKqQGLQnV9fLnt5n/2A==",
+      "binaryPath": "package/bin/ccusage.exe",
+      "resourceName": "ccusage-x86_64-pc-windows-msvc.exe",
+      "binarySha256": "ba5311e2f982c93a6b94dde5ca5488755f0f881b9836075076d58765d75fd2ce",
+      "binaryBytes": 4222976,
+      "tarballBytes": 2221764,
+      "architectureVerified": true,
+      "runtimeVerified": true,
+      "testedOs": "Windows x64, os.release()=10.0.26200",
+      "minimumOsVerified": null
+    },
+    "aarch64-apple-darwin": {
+      "package": "@ccusage/ccusage-darwin-arm64",
+      "metadataUrl": "https://registry.npmjs.org/@ccusage%2fccusage-darwin-arm64/20.0.26",
+      "tarballUrl": "https://registry.npmjs.org/@ccusage/ccusage-darwin-arm64/-/ccusage-darwin-arm64-20.0.26.tgz",
+      "integrity": "sha512-wc2Ed0elPARpRyfQkSrSXuX136yDEGOLkMqxQA/3gdNm+/hxgAN4fKeZsawFKelofLoCvWIy+QkUbSJ71BwNxw==",
+      "binaryPath": "package/bin/ccusage",
+      "resourceName": "ccusage-aarch64-apple-darwin",
+      "binarySha256": "6d816ab7e989d475f19b8178330435209b31b7714496f1fcbc9bdf6951082d03",
+      "binaryBytes": 3446176,
+      "tarballBytes": 2093820,
+      "architectureVerified": true,
+      "runtimeVerified": false,
+      "minimumOsVerified": null
+    }
+  }
+}

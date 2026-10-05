@@ -1,0 +1,36 @@
+[package]
+name = "usage-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "usage_desktop"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[build-dependencies]
+tauri-build = { version = "2.4.1", features = [] }
+
+[dependencies]
+tauri = { version = "2.8.5", features = [] }
+tauri-plugin-dialog = "2.4.0"
+tauri-plugin-single-instance = "=2.3.0"
+futures-util.workspace = true
+usage-core.workspace = true
+usage-contracts.workspace = true
+usage-adapters.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile = "3.23"

@@ -1,0 +1,21 @@
+{
+  "name": "agent-usage-dashboard",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": { "node": ">=24.19.0 <25" },
+  "scripts": {
+    "dev": "pnpm --filter @usage/dashboard dev",
+    "build": "pnpm --filter @usage/dashboard build",
+    "test": "pnpm --filter @usage/dashboard test",
+    "typecheck": "pnpm --filter @usage/dashboard typecheck",
+    "lint": "pnpm --filter @usage/dashboard lint",
+    "contracts:generate": "node scripts/generate-contracts.mjs",
+    "contracts:check": "node scripts/generate-contracts.mjs --check",
+    "scripts:test": "node --test scripts/*.test.mjs",
+    "boundaries:check": "node scripts/check-boundaries.mjs",
+    "version:check": "node scripts/verify-version.mjs",
+    "desktop:dev": "pnpm --filter @usage/desktop dev",
+    "desktop:build": "node scripts/build-desktop.mjs"
+  }
+}

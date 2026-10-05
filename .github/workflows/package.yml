@@ -1,0 +1,51 @@
+name: Local test packages (no release)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.15.0
+      - run: rustup toolchain install 1.91.1 --profile minimal
+      - run: rustup target add ${{ matrix.target }} --toolchain 1.91.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm scripts:test && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+      - run: node --test crates/usage-adapters/tests/*.test.mjs
+      - run: cargo test -p usage-core -p usage-contracts -p usage-adapters --locked
+      - run: pnpm desktop:build --target=${{ matrix.target }}
+      - run: node scripts/ci-sidecar-env.mjs ${{ matrix.target }}
+      - run: cargo test -p usage-adapters --test native_pipeline --locked --target ${{ matrix.target }} -- --ignored
+      - run: cargo test -p usage-desktop --locked --target ${{ matrix.target }} -- --ignored
+      - if: runner.os == 'Windows'
+        run: node scripts/verify-bundle.mjs --target=${{ matrix.target }} --kind=staging --root=target/${{ matrix.target }}/release --output=artifacts/${{ matrix.target }}/bundle-manifest.json
+      - if: runner.os == 'macOS'
+        run: node scripts/verify-bundle.mjs --target=${{ matrix.target }} --kind=app-bundle "--root=target/${{ matrix.target }}/release/bundle/macos/Agent Usage Dashboard.app" --output=artifacts/${{ matrix.target }}/bundle-manifest.json
+      # Original locked hashes remain mandatory. Re-signing drift blocks this job until explicitly addressed.
+      - if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict "target/${{ matrix.target }}/release/bundle/macos/Agent Usage Dashboard.app"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-test-package-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/bundle/
+            artifacts/${{ matrix.target }}/bundle-manifest.json
+          if-no-files-found: error
+          retention-days: 7
