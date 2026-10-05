@@ -123,10 +123,11 @@ export class MockUsageClient implements UsageClient {
     this.checkProviders(query.providerIds);
     if (query.providerIds.length > 1) throw apiError('UNSUPPORTED_FILTER', '演示总览支持全部来源或单个来源。');
     if (query.range.start >= query.range.end) throw apiError('INVALID_QUERY', '日期范围必须满足开始日期早于结束日期。');
-    const week = query.range.start === DEMO_RANGE.start && query.range.end === DEMO_RANGE.end;
+    const recent30 = query.range.start === '2026-09-05' && query.range.end === DEMO_RANGE.end;
+    const week = (query.range.start === DEMO_RANGE.start && query.range.end === DEMO_RANGE.end) || recent30;
     const today = query.range.start === DEMO_DATE && query.range.end === DEMO_RANGE.end;
     const month = query.range.start === '2026-10-01' && query.range.end === '2026-11-01';
-    if (!week && !today && !month) throw apiError('UNSUPPORTED_FILTER', '演示数据只提供今日、本周和本月三个预置范围。');
+    if (!week && !today && !month) throw apiError('UNSUPPORTED_FILTER', '演示数据只提供今日、本周、最近30天和本月预置范围。');
     const selectedProviders = query.providerIds.length ? query.providerIds : PROVIDERS.map(p => p.providerId);
     if (query.modelIds.length > 1 || query.modelIds.some(id => !MODEL_PROVIDER[id])) throw apiError('UNSUPPORTED_FILTER', '该模型筛选没有可用的演示快照。');
     if (query.modelIds.length && (this.scenario === 'limited' || selectedProviders.some(id => !PROVIDERS.find(p => p.providerId === id)!.capabilities.supportedDimensions.includes('model')))) {

@@ -7,6 +7,35 @@ export function formatTokens(value: string | null): string {
   if (value === null) return '不可用';
   try { return new Intl.NumberFormat('en-US').format(BigInt(value)); } catch { return '不可用'; }
 }
+
+/** Chinese reading aid only; the exact decimal string remains the primary value. */
+export function formatChineseMagnitude(value: string | null, locale = 'zh-CN'): string | null {
+  if (!locale.toLowerCase().startsWith('zh') || value === null || !/^\d+$/.test(value)) return null;
+  const number = BigInt(value);
+  if (number < 10_000n) return null;
+  const units = [[10_000_000_000_000_000n, '京'], [1_000_000_000_000n, '兆'], [100_000_000n, '亿'], [10_000n, '万']] as const;
+  const index = units.findIndex(([scale]) => number >= scale);
+  const [scale, name] = units[index];
+  let text = `${number / scale}${name}`;
+  let remainder = number % scale;
+  const next = units[index + 1];
+  if (next) {
+    if (remainder / next[0] > 0n) text += `${remainder / next[0]}${next[1]}`;
+    remainder %= next[0];
+  } else if (remainder > 0n) { text += remainder.toString(); remainder = 0n; }
+  return `${remainder > 0n ? '约' : ''}${text}`;
+}
+
+/** Compact axis text. All rounding is done with integers, never unsafe token Numbers. */
+export function formatChartCount(value: string): string {
+  const number = BigInt(value);
+  for (const [scale, unit] of [[1_000_000_000_000n, '万亿'], [100_000_000n, '亿'], [10_000n, '万']] as const) {
+    if (number < scale) continue;
+    const tenths = (number * 10n + scale / 2n) / scale;
+    return `${tenths / 10n}${tenths % 10n ? `.${tenths % 10n}` : ''}${unit}`;
+  }
+  return number.toString();
+}
 export function formatUsd(value: string | null): string {
   if (value === null || !/^\d+(?:\.\d+)?$/.test(value)) return '不可用';
   const [whole, fraction = ''] = value.split('.');

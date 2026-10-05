@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ApiError, Coverage, Metric, ProviderState, ScanState } from '../api/generated/usage';
-import { accuracyLabels, formatTokens, formatUsd, qualityDescription } from './format';
+import { accuracyLabels, formatChineseMagnitude, formatTokens, formatUsd, qualityDescription } from './format';
 import { Icon } from './Icon';
 
 const stateLabels: Record<ProviderState | ScanState, string> = {
@@ -17,8 +17,9 @@ export function QualityBadge({ metric }: { metric: Metric<string> }) {
 export function MetricValue({ metric, money = false }: { metric: Metric<string>; money?: boolean }) {
   return <span className={metric.value === null ? 'unavailable' : 'numeric'} title={qualityDescription(metric)}>{money ? formatUsd(metric.value) : formatTokens(metric.value)}</span>;
 }
-export function MetricCard({ label, metric, note, money = false, accent = false }: { label: string; metric: Metric<string>; note: string; money?: boolean; accent?: boolean }) {
-  return <article className={`metric-card ${accent ? 'metric-accent' : ''}`}><div className="metric-label">{label}<Icon name={money ? 'info' : 'bolt'} /></div><div className="metric-number"><MetricValue metric={metric} money={money} /></div><div className="metric-bottom"><QualityBadge metric={metric} /><span className="small muted">{note}</span></div>{metric.missingRows > 0 && metric.value !== null && <p className="small warning-text">{metric.missingRows} 条记录缺失 · 仅已知部分</p>}</article>;
+export function MetricCard({ label, metric, note, money = false, accent = false, locale = 'zh-CN' }: { label: string; metric: Metric<string>; note: string; money?: boolean; accent?: boolean; locale?: string }) {
+  const reading = money ? null : formatChineseMagnitude(metric.value, locale);
+  return <article className={`metric-card ${accent ? 'metric-accent' : ''}`}><div className="metric-label">{label}<Icon name={money ? 'info' : 'bolt'} /></div><div className="metric-number"><MetricValue metric={metric} money={money} /></div>{reading && <p className="metric-readable" lang="zh-CN">{reading}</p>}<div className="metric-bottom"><QualityBadge metric={metric} /><span className="small muted">{note}</span></div>{metric.missingRows > 0 && metric.value !== null && <p className="small warning-text">{metric.missingRows} 条记录缺失 · 仅已知部分</p>}</article>;
 }
 export function Panel({ title, eyebrow, children, action, className = '' }: { title: string; eyebrow?: string; children: ReactNode; action?: ReactNode; className?: string }) {
   return <section className={`panel ${className}`}><div className="panel-header"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h2>{title}</h2></div>{action}</div>{children}</section>;

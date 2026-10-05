@@ -133,3 +133,9 @@ Windows 增加免安装 ZIP：主 exe、锁定 ccusage.exe、必要 resources/no
 已在本机执行便携包的无界面诊断（不改旧 GUI/profile/cache），新 Rust 受控 runner/冻结元数据/Adapter/Core/SQLite/DTO 链路读取真实 Codex 和 Antigravity，两扫描 succeeded。私人统计只放忽略的 artifacts/private-usage；不提交、不上传，不读取认证文件。不是用 Mock 或独立 CLI 结果冒充新版后端。未知字段、Antigravity 多模型推理拆分、.pb 未支持等限制保留 warning/nullable；正式 GUI全点击和真实 Mac 数据仍未验收。
 
 profile v1 → v2 原子迁移已加测试：保留既有 device/Claude dataset，新增来源独立稳定 UUID，拒绝新版 profile 被旧二进制读取。Settings 支持多 Provider，目录引用绑定来源。Default range 最近30天，关闭来源有“启用并扫描”入口。本次旧 v0.0.1 tag/Release 保持不变，未发布正式安装器。详细证据与操作见 ../ci-validation/0.0.2-codex-antigravity.md。
+
+## 0.0.3 UI 可读性增量（实施前记录）
+
+用户要求每日完整数字只在悬停显示、筛选收为图标展开、增加曲线图并将趋势放概览最前、精确数字下补中文量级。1,855,654,157 正确量级为18亿5565万（约），不是1亿8千万。只改展示/交互：使用API原始字符串的BigInt格式，图形比例计算不改变业务值；未知值/缺失时间区间不填零，不改变统计、价格、Provider/SQLite或API1.1.0。
+
+曲线默认、保留柱状切换，完整数值tooltip支持鼠标/键盘/触摸，轴标签稀疏显示。筛选按钮默认折叠、显示当前查询摘要，保留原有查询参数与能力限制，支持Escape/外部点击关闭。中文量级只在中文UI显示，精确值始终保留。前端任务已交付，主agent做用户指定的目标修改，不启动agent、不改原始frontend.md/data.md。应用增量为0.0.3；继续免费标准runner输出Windows免安装/NSIS和ARM64 DMG。
