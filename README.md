@@ -1,10 +1,10 @@
 # Agent Usage Dashboard
 
-**0.0.3：曲线趋势优先、图标筛选、完整数值提示、中文量级。** 两平台免费 Actions 已通过，Windows 提供解压即用 ZIP 和 NSIS，Mac 提供 ARM64 DMG。Codex / Antigravity / Claude Code 统计与历史继续保留。[最新构建与使用](docs/ci-validation/0.0.3-chart-readability.md) · [来源范围](docs/ci-validation/0.0.2-codex-antigravity.md) · [流水线](docs/GITHUB_ACTIONS.md)
+**0.0.4：无使用日期补零并连续绘图，模型按 token/估算成本降序，未使用与明细不足项默认折叠。** 两平台免费 Actions 已通过，Windows 提供解压即用 ZIP 和 NSIS，Mac 提供 ARM64 DMG。图形优先、紧凑筛选、中文量级及三来源历史继续保留。[最新构建与使用](docs/ci-validation/0.0.4-zero-periods-model-ranking.md) · [来源范围](docs/ci-validation/0.0.2-codex-antigravity.md) · [流水线](docs/GITHUB_ACTIONS.md)
 
 Windows x64 / macOS Apple Silicon ARM64 的本地 AI 用量桌面应用。Tauri 2 + React/TypeScript + Rust Core + SQLite + 锁定 ccusage sidecar；不开发 Intel Mac。
 
-开发状态：API 1.1.0 保持兼容，已接入 Claude Code、Codex、Antigravity。CI 已通过前端 38、Node/SQL 16、两平台各 53 个默认及 4 个 native Rust tests、严格 clippy、安装/免安装解压后再次执行的 4 个 native tests。Windows ZIP 5.52 MiB / NSIS 4.01 MiB / Mac DMG 5.00 MiB。新后端已在本机只读扫描真实 Codex/Antigravity，两个来源 succeeded，私人用量未上传。真实 GUI 全流程、最低 OS、完整依赖 notices 和正式签名仍待验收；本机 MSVC/SDK 未安装。
+开发状态：API 1.1.0 保持兼容，已接入 Claude Code、Codex、Antigravity。CI 已通过前端 44、Node/SQL 16、Linux Rust 39、两平台各 56 个默认及 4 个 native Rust tests、严格 clippy、安装/免安装解压后再次执行的 4 个 native tests。Windows ZIP 5.52 MiB / NSIS 4.01 MiB / Mac DMG 5.01 MiB。新后端已在本机只读扫描真实 Codex/Antigravity，两个来源 succeeded，私人用量未上传。真实 GUI 全流程、最低 OS、完整依赖 notices 和正式签名仍待验收；本机 MSVC/SDK 未安装。
 
 Windows 免安装：先退出旧版，解压整个 portable.zip，双击 usage-desktop.exe，并保留同目录 ccusage.exe。进入数据来源分别点击 Codex/Antigravity 的“启用并扫描”；默认目录找不到时在设置选择目录。默认显示最近 30 天；未扫描与未知字段显示不可用，不冒充零。需要系统已有 WebView2；配置/缓存仍保存到用户应用数据目录，与安装版共享历史。
 

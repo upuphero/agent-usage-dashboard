@@ -147,3 +147,5 @@ profile v1 → v2 原子迁移已加测试：保留既有 device/Claude dataset�
 用户指出无使用日期应为0、曲线不能因API省略日期而断开；0.0.3把省略桶与未知字段一同断开是主agent的问题。本次由Core补齐查询周期中完整标准Daily覆盖证明没有记录的桶，值为derived zero；未采集、明确null或不完整覆盖仍不伪造零。UI只画API的完整时间序列，不自己补业务数字，保证统计总计不因补展示桶而增加。
 
 模型分布提供token和API估算成本两种精确降序排序；已知零用量折叠在底部。截图中null token但有成本/细分用量的模型并非未使用，按当前排序字段不足单独放末尾折叠，避免伪装零。费用按API已有金额排序，不新建价格规则；BigInt/定点字符串比较保留精度。API1.1.0和端口不变，应用0.0.4。两方已完成交付，主agent做必要修正，不启动新agent、不改原始frontend.md/data.md。
+
+0.0.4 已完成：Core 日/ISO周/月补桶、明确未知保持未知、总计和记录计数不变；Overview 最大10,000天限制补桶内存。实际合成浏览器验证零值连续曲线、完整提示、两种降序、折叠展开/收起和无console错误。免费 run37265070751 / 25e115a3634aa03d0082aa3999f1734a36d76927 五jobs success；44前端/16Node SQL/39Linux Rust、各平台56默认 + 4native + 安装或解压重复4native tests、strict lint、固定sidecar原始hash保持通过。Windows ZIP5784720 bytes/NSIS4208640 bytes/Mac DMG5250039 bytes已下载逐一重验SHA；详细证据见../ci-validation/0.0.4-zero-periods-model-ranking.md。设置/缓存仍沿用同一用户目录，无需重建数据集；截图/日志仅忽略目录，真实GUI与最低OS/正式签名等边界不扩大。

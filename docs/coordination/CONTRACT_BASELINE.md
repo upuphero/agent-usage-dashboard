@@ -1,6 +1,6 @@
 # 接口基线
 
-状态：**接口基线已就绪，三来源与多 Provider Settings 已集成**。两平台原生 tests/clippy/安装检查已通过；本机 MSVC/SDK 仍按用户要求不安装。契约 **1.1.0**（兼容原 1.0 查询/扫描）；应用 **0.0.3**，图形优先的 UI 增量不改统计/接口，Windows免安装ZIP继续提供。仅 Windows x64 / macOS Apple Silicon ARM64。
+状态：**接口基线已就绪，三来源与多 Provider Settings 已集成**。本机 MSVC/SDK 仍按用户要求不安装。契约 **1.1.0**（兼容原 1.0 查询/扫描）；应用 **0.0.4**，Core 补齐已知零用量周期，模型分布支持 token/估算成本降序与未使用项折叠，接口和统计总计不变，Windows免安装ZIP继续提供。仅 Windows x64 / macOS Apple Silicon ARM64。最新验证见 [0.0.4 记录](../ci-validation/0.0.4-zero-periods-model-ranking.md)。
 
 ## 归属与交接
 
