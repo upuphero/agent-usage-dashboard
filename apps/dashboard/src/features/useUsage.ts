@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useUsageClient } from '../app/UsageContext';
 import type { ExportRequest, OverviewQuery, SessionQuery, ScanSummary, UpdateSettingsRequest } from '../api/generated/usage';
@@ -10,7 +10,13 @@ export function useApiInfo() {
 }
 export function useProviders(enabled: boolean) {
   const client = useUsageClient();
-  return useQuery({ queryKey: ['usage', 'providers'], queryFn: () => client.listProviders(), enabled });
+  const cache = useQueryClient();
+  const query = useQuery({ queryKey: ['usage', 'providers'], queryFn: () => client.listProviders(), enabled,
+    refetchInterval: value => value.state.data?.some(provider => provider.state === 'scanning') ? 750 : false });
+  useEffect(() => {
+    if (query.data) void cache.invalidateQueries({ queryKey: ['usage'], predicate: value => ['overview', 'sessions'].includes(String(value.queryKey[1])) });
+  }, [cache, query.data]);
+  return query;
 }
 export function useOverview(query: OverviewQuery, enabled: boolean) {
   const client = useUsageClient();

@@ -138,7 +138,7 @@ impl Runtime {
                 job_id.clone(),
                 request.provider_id.clone(),
                 CollectRequest {
-                    timezone: request.timezone,
+                    timezone: request.timezone.clone(),
                     config,
                 },
                 cancellation,
@@ -146,7 +146,18 @@ impl Runtime {
             .catch_unwind()
             .await;
             match outcome {
-                Ok(Ok(record)) => runtime.publish_terminal(record, false).await,
+                Ok(Ok(record)) => {
+                    let succeeded = record.state == ScanState::Succeeded;
+                    runtime.publish_terminal(record, false).await;
+                    if succeeded {
+                        if let Some(settings) = &runtime.settings {
+                            // Keep the persisted retry marker if the rebuild or its acknowledgement fails.
+                            let _ = settings
+                                .complete_timezone_rescan(&request.provider_id, &request.timezone)
+                                .await;
+                        }
+                    }
+                }
                 failure => {
                     let mut failed = queued;
                     failed.state = ScanState::Failed;
@@ -225,6 +236,34 @@ impl Runtime {
                     self.publish_terminal(scan, true).await;
                 }
             }
+        }
+        Ok(())
+    }
+    /// Rebuild daily buckets from raw logs after correcting the legacy UTC default.
+    pub async fn rescan_changed_timezone(self: &Arc<Self>) -> Result<(), CoreError> {
+        let Some(settings) = &self.settings else {
+            return Ok(());
+        };
+        let providers: Vec<_> = self
+            .configs
+            .read()
+            .await
+            .iter()
+            .filter(|(_, config)| config.enabled)
+            .map(|(provider, _)| provider.clone())
+            .collect();
+        let Some(timezone) = settings.take_timezone_rescan(&providers).await else {
+            return Ok(());
+        };
+        if providers.is_empty() {
+            return settings.complete_timezone_rescan("", &timezone).await;
+        }
+        for provider_id in providers {
+            self.start_scan(api::StartScanRequest {
+                provider_id,
+                timezone: timezone.clone(),
+            })
+            .await?;
         }
         Ok(())
     }
@@ -455,6 +494,31 @@ mod tests {
             runtime().cancel_scan("unknown").await.unwrap_err(),
             CoreError::ScanNotFound
         );
+    }
+    #[tokio::test]
+    async fn timezone_migration_scans_only_enabled_sources_once_in_the_new_zone() {
+        let base = runtime();
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = crate::profile::DesktopProfile::load_or_create(directory.path()).unwrap();
+        profile.timezone = "America/Phoenix".into();
+        profile.timezone_needs_rescan = true;
+        let mut configs = base.configs.read().await.clone();
+        configs.insert("disabled".into(), SourceConfig::default());
+        let runtime = Runtime::new_with_settings(
+            base.service.clone(),
+            configs,
+            Arc::new(|_| {}),
+            Some(Arc::new(SettingsStore::new(directory.path(), profile))),
+        );
+        runtime.rescan_changed_timezone().await.unwrap();
+        let first = runtime.active.lock().await["fixture"].clone();
+        assert_eq!(first.timezone, "America/Phoenix");
+        assert_eq!(runtime.active.lock().await.len(), 1);
+        runtime.rescan_changed_timezone().await.unwrap();
+        assert_eq!(runtime.active.lock().await["fixture"].id, first.id);
+        runtime.shutdown().await;
+        runtime.rescan_changed_timezone().await.unwrap();
+        assert!(runtime.active.lock().await.is_empty());
     }
 
     #[tokio::test]

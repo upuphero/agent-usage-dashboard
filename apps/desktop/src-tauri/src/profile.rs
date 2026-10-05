@@ -42,6 +42,8 @@ pub struct DesktopProfile {
     pub claude_enabled: bool,
     pub claude_root_path: Option<String>,
     pub timezone: String,
+    #[serde(default)]
+    pub timezone_needs_rescan: bool,
     #[serde(default = "initial_revision")]
     pub settings_revision: u64,
     #[serde(default)]
@@ -52,15 +54,22 @@ pub struct DesktopProfile {
 fn initial_revision() -> u64 {
     1
 }
+fn system_timezone() -> String {
+    iana_time_zone::get_timezone()
+        .ok()
+        .filter(|zone| usage_core::application::validate_timezone(zone).is_ok())
+        .unwrap_or_else(|| "UTC".into())
+}
 impl DesktopProfile {
     fn fresh() -> Self {
         Self {
-            profile_version: 2,
+            profile_version: 3,
             device_id: uuid::Uuid::new_v4().to_string(),
             claude_dataset_id: uuid::Uuid::new_v4().to_string(),
             claude_enabled: false,
             claude_root_path: None,
-            timezone: "UTC".into(),
+            timezone: system_timezone(),
+            timezone_needs_rescan: false,
             settings_revision: 1,
             claude_directory_ref: None,
             additional_providers: PROVIDERS[1..]
@@ -70,10 +79,10 @@ impl DesktopProfile {
         }
     }
     fn validate(&self) -> Result<(), CoreError> {
-        if self.profile_version > 2 {
+        if self.profile_version > 3 {
             return Err(CoreError::StorageSchemaNewer);
         }
-        if !matches!(self.profile_version, 1 | 2) || self.settings_revision == 0 {
+        if !matches!(self.profile_version, 1..=3) || self.settings_revision == 0 {
             return Err(CoreError::InvalidData);
         }
         for id in [&self.device_id, &self.claude_dataset_id] {
@@ -85,7 +94,7 @@ impl DesktopProfile {
             }
         }
         usage_core::application::validate_timezone(&self.timezone)?;
-        if self.profile_version == 2
+        if self.profile_version >= 2
             && (self.additional_providers.len() != 2
                 || !PROVIDERS[1..]
                     .iter()
@@ -121,6 +130,31 @@ impl DesktopProfile {
         }
         Ok(())
     }
+    fn migrate(&mut self, local_timezone: &str) -> Result<bool, CoreError> {
+        if self.profile_version >= 3 {
+            return Ok(false);
+        }
+        if self.profile_version == 1 {
+            for id in &PROVIDERS[1..] {
+                self.additional_providers
+                    .entry((*id).into())
+                    .or_insert_with(ProviderProfile::fresh);
+            }
+        }
+        // Older releases defaulted every machine to UTC. Correct that default once;
+        // retain other saved zones and respect explicit UTC choices after migration.
+        if self.timezone == "UTC" && local_timezone != "UTC" {
+            usage_core::application::validate_timezone(local_timezone)?;
+            self.timezone = local_timezone.into();
+            self.settings_revision = self
+                .settings_revision
+                .checked_add(1)
+                .ok_or(CoreError::Overflow)?;
+            self.timezone_needs_rescan = true;
+        }
+        self.profile_version = 3;
+        Ok(true)
+    }
     fn read(path: &Path) -> Result<Self, CoreError> {
         if fs::metadata(path).map_err(|_| CoreError::Storage)?.len() > 16 * 1024 {
             return Err(CoreError::InvalidData);
@@ -137,14 +171,7 @@ impl DesktopProfile {
         match fs::metadata(&path) {
             Ok(_) => {
                 let mut profile = Self::read(&path)?;
-                if profile.profile_version == 1 {
-                    profile.profile_version = 2;
-                    for id in &PROVIDERS[1..] {
-                        profile
-                            .additional_providers
-                            .entry((*id).into())
-                            .or_insert_with(ProviderProfile::fresh);
-                    }
+                if profile.migrate(&system_timezone())? {
                     profile.persist(directory)?;
                 }
                 return Ok(profile);
@@ -311,7 +338,7 @@ mod tests {
     fn newer_or_corrupt_profiles_are_never_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let mut profile = DesktopProfile::load_or_create(dir.path()).unwrap();
-        profile.profile_version = 3;
+        profile.profile_version = 4;
         let bytes = serde_json::to_vec(&profile).unwrap();
         fs::write(dir.path().join("profile.json"), &bytes).unwrap();
         assert!(matches!(
@@ -341,6 +368,54 @@ mod tests {
         assert_eq!(read.settings_revision, 1);
         assert_eq!(read.device_id, original.device_id);
         assert_eq!(read.claude_dataset_id, original.claude_dataset_id);
+    }
+    #[test]
+    fn new_profiles_use_the_operating_system_timezone() {
+        let profile = DesktopProfile::fresh();
+        assert_eq!(profile.timezone, iana_time_zone::get_timezone().unwrap());
+        assert!(!profile.timezone_needs_rescan);
+    }
+    #[test]
+    fn old_utc_default_migrates_once_without_replacing_history_identities() {
+        let mut old = DesktopProfile::fresh();
+        old.profile_version = 2;
+        old.timezone = "UTC".into();
+        old.claude_enabled = true;
+        let original = old.clone();
+        assert!(old.migrate("America/Phoenix").unwrap());
+        assert_eq!(old.timezone, "America/Phoenix");
+        assert_eq!(old.settings_revision, original.settings_revision + 1);
+        assert_eq!(old.device_id, original.device_id);
+        assert_eq!(old.claude_dataset_id, original.claude_dataset_id);
+        assert_eq!(
+            old.provider("ccusage.codex").unwrap().dataset_id,
+            original.provider("ccusage.codex").unwrap().dataset_id
+        );
+        assert!(old.claude_enabled);
+        assert!(old.timezone_needs_rescan);
+        let dir = tempfile::tempdir().unwrap();
+        old.persist(dir.path()).unwrap();
+        let mut reopened = DesktopProfile::load_or_create(dir.path()).unwrap();
+        assert_eq!(reopened.timezone, "America/Phoenix");
+        assert!(reopened.timezone_needs_rescan);
+        reopened.timezone = "UTC".into();
+        reopened.persist(dir.path()).unwrap();
+        assert_eq!(
+            DesktopProfile::load_or_create(dir.path()).unwrap().timezone,
+            "UTC"
+        );
+    }
+    #[test]
+    fn migration_preserves_other_saved_timezones_and_a_local_utc_system() {
+        for (saved, local) in [("Asia/Shanghai", "America/Phoenix"), ("UTC", "UTC")] {
+            let mut old = DesktopProfile::fresh();
+            old.profile_version = 2;
+            old.timezone = saved.into();
+            assert!(old.migrate(local).unwrap());
+            assert_eq!(old.timezone, saved);
+            assert_eq!(old.settings_revision, 1);
+            assert!(!old.timezone_needs_rescan);
+        }
     }
     #[test]
     fn version_one_migration_creates_stable_separate_provider_datasets() {

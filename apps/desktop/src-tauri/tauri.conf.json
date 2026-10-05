@@ -1,5 +1,5 @@
 {
-  "$schema": "https://schema.tauri.app/config/2", "productName": "Agent Usage Dashboard", "version": "0.0.4", "identifier": "dev.agentusage.dashboard",
+  "$schema": "https://schema.tauri.app/config/2", "productName": "Agent Usage Dashboard", "version": "0.0.5", "identifier": "dev.agentusage.dashboard",
   "build": { "beforeDevCommand": "pnpm --filter @usage/dashboard dev", "beforeBuildCommand": "pnpm --filter @usage/dashboard build", "devUrl": "http://127.0.0.1:1420", "frontendDist": "../../dashboard/dist" },
   "app": { "windows": [{ "label": "main", "title": "Agent Usage Dashboard", "width": 1180, "height": 780, "minWidth": 800, "minHeight": 560 }], "security": { "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" } },
   "bundle": { "active": true, "targets": ["nsis", "dmg"], "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"], "resources": { "../../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md" }, "externalBin": ["binaries/ccusage"], "windows": { "webviewInstallMode": { "type": "downloadBootstrapper" } }, "macOS": { "minimumSystemVersion": "13.0", "signingIdentity": "-" } }

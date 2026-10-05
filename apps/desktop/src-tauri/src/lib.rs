@@ -37,6 +37,7 @@ pub fn run() {
                 Some(settings),
             );
             tauri::async_runtime::block_on(runtime.recover_interrupted_scans())?;
+            tauri::async_runtime::block_on(runtime.rescan_changed_timezone())?;
             app.manage(runtime);
             Ok(())
         })

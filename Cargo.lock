@@ -4272,7 +4272,7 @@ dependencies = [
 
 [[package]]
 name = "usage-adapters"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4292,7 +4292,7 @@ dependencies = [
 
 [[package]]
 name = "usage-contracts"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -4300,7 +4300,7 @@ dependencies = [
 
 [[package]]
 name = "usage-core"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4313,12 +4313,13 @@ dependencies = [
 
 [[package]]
 name = "usage-desktop"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "async-trait",
  "chrono",
  "chrono-tz",
  "futures-util",
+ "iana-time-zone",
  "rust_decimal",
  "serde",
  "serde_json",

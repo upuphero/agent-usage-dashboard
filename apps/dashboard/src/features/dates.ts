@@ -2,6 +2,9 @@ import type { DateRange } from '../api/generated/usage';
 
 export type DatePreset = 'today' | 'week' | 'month' | 'last30';
 const iso = (date: Date) => date.toISOString().slice(0, 10);
+export function systemTimezone(): string {
+  return new Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
 export function todayInTimezone(timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const part = (type: string) => parts.find(value => value.type === type)!.value;

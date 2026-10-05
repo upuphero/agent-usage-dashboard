@@ -82,6 +82,10 @@ API 升为 **1.1.0**，major=1 保持查询/扫描/导出 wire DTO 不变。新�
 
 Provider 目录由宿主原生选择器选择并按现有 Adapter 规则校验，UI 只传不透明 directoryRef，不接收任意绝对路径。更新采用 expectedRevision，冲突要求重新读取；只修改 timezone/Provider enabled/目录引用，deviceId/datasetId 不出现在更新请求。扫描中拒绝修改配置，关闭扫描不清空历史。目录迁移沿用现有 dataset 身份，独立新数据集/重建仍不在此设置入口实现。时区改变只影响下一次查询/采集，不重新分桶现有 Daily。
 
+本地日期修复：新 profile v3 使用宿主系统的 IANA 时区，前端真实模式的初始时区也取本机时区。v1/v2 的 UTC 默认配置升级时改为本机时区，其他已保存时区保留；设备与数据集身份保持不变。宿主自动为已启用来源重新扫描原始日志，生成新时区的 Daily/Session 快照，保留旧快照；重扫标记持久化，全部启用来源成功后清除，失败或退出后下次启动重试。迁移完成后手动保存的 UTC 不会再次覆盖。前端在后台扫描期间显示进度提示并轮询来源，完成后失效统计缓存。
+
+本地验证：48 项前端测试、typecheck、lint、Vite 构建、契约/依赖边界和 Rust 格式检查通过。新增 Phoenix 2026-10-04 22:54、当地午夜、UTC 两侧与 DST 日期回归，以及 profile 迁移/身份、重扫生命周期与持久化重试的 Rust 回归；Rust 原生测试因本机缺少 MSVC link.exe 未执行通过，仍需原生 CI 验证。
+
 宿主 profile v1 增加有默认值的设置 revision 与目录引用，可读已有 profile；Windows 原子替换使用 MoveFileExW，Unix 使用 rename + directory sync。前端/数据均已完成交付，后续集成只针对新增设置 transport、Mock 和 Settings 页面，不重写统计或修改数据实现；记录增量并重新验证原有测试。
 
 本次已完成上述增量：Tauri/Mock transport 和 Settings 页面实际接入，目录取消保留当前设置，revision 冲突要求重读，保存后统一失效查询缓存并应用持久 timezone，来源开关只控制采集、不删除历史。Mock 设置明确仅当前页面会话有效、目录选择不访问磁盘。原 1.0 服务缺能力时不发送未知命令。

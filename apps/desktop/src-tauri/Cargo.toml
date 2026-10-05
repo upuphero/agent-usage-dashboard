@@ -26,6 +26,7 @@ usage-contracts.workspace = true
 usage-adapters.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
+iana-time-zone = "0.1.65"
 rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true

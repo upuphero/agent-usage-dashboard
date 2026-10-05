@@ -5,7 +5,7 @@ import { normalizeError } from '../api/protocol';
 import { Icon, type IconName } from '../components/Icon';
 import { FilterPopover } from '../components/FilterPopover';
 import { ErrorNotice, LoadingState, Notice, Panel, EmptyState, StatusBadge } from '../components/ui';
-import { displayRange, rangeForPreset, todayInTimezone, type DatePreset } from '../features/dates';
+import { displayRange, rangeForPreset, systemTimezone, todayInTimezone, type DatePreset } from '../features/dates';
 import { Overview } from '../features/Overview';
 import { Providers } from '../features/Providers';
 import { Sessions } from '../features/Sessions';
@@ -36,7 +36,7 @@ export function App({ demo, scenario = 'partial' }: { demo: boolean; scenario?: 
   const cache = useQueryClient();
   const [page, setPage] = useState<Page>(readPage);
   const [theme, setTheme] = useState<Theme>(readTheme);
-  const [timezone, setTimezone] = useState('America/Phoenix');
+  const [timezone, setTimezone] = useState(() => demo ? 'America/Phoenix' : systemTimezone());
   const [preset, setPreset] = useState<DatePreset>('last30');
   const [bucket, setBucket] = useState<Bucket>('day');
   const [providerId, setProviderId] = useState('');
@@ -78,6 +78,7 @@ export function App({ demo, scenario = 'partial' }: { demo: boolean; scenario?: 
   const sessionQuery: SessionQuery = { timezone, providerIds: sessionProviders.map(provider => provider.providerId), modelIds: modelSupported && modelId ? [modelId] : [], activeRange: activeOnly ? range : null, offset, limit: 20 };
   const sessions = useSessions(sessionQuery, page === 'sessions' && api.isSuccess && providersQuery.isSuccess && sessionProviders.length > 0 && !!api.data.capabilities.includes('sessions'));
   const scan = useScan(timezone);
+  const backgroundScanning = !scan.pending && !scan.job && providers.some(provider => provider.state === 'scanning');
   const [enabling, setEnabling] = useState(false);
   const [setupError, setSetupError] = useState<unknown>(null);
   const enableAndScan = async (providerId: string) => {
@@ -110,6 +111,7 @@ export function App({ demo, scenario = 'partial' }: { demo: boolean; scenario?: 
       <div className="page-heading"><div><p className="eyebrow">{info.english.toUpperCase()}</p><h1>{info.title}</h1><p className="muted">{info.description}</p></div><button className="button" disabled={!api.isSuccess || providersQuery.isFetching} onClick={refresh}><Icon name="refresh" className={providersQuery.isFetching ? 'spin' : ''} />刷新视图</button></div>
       {api.isPending ? <LoadingState label="正在连接用量服务…" /> : api.isError ? <ErrorNotice error={normalizeError(api.error)} retry={() => { void api.refetch(); }} /> : <>
         {api.data.capabilities.includes('adapter-integration-pending') && <Notice tone="warning" title="采集服务尚未接入">桌面接口已响应，真实来源仍待接入。当前页面没有真实采集结果。</Notice>}
+        {backgroundScanning && <Notice title="正在更新用量统计">正在按 {timezone} 重新统计已启用的来源，完成后会自动更新视图。</Notice>}
         <div className="query-toolbar"><div className="query-summary"><Icon name="clock" /><span>{displayRange(range)} · {timezone}</span><span className="query-chip">{providerId ? providers.find(provider => provider.providerId === providerId)?.displayName : '全部来源'}</span>{modelId && <span className="query-chip">{modelId}</span>}<span className="query-chip">{bucket === 'day' ? '每日' : bucket === 'week' ? '每周' : '每月'}</span></div><FilterPopover summary={`${displayRange(range)} · ${providerId || '全部来源'} · ${modelId || '全部模型'}`}><div className="filter-panel"><div className="filter-field"><label htmlFor="date-preset">日期范围</label><select id="date-preset" value={preset} onChange={event => { setPreset(event.target.value as DatePreset); resetPagination(); }}><option value="last30">最近 30 天</option><option value="today">今日</option><option value="week">本周 · ISO 周一开始</option><option value="month">本月</option></select></div><div className="filter-field"><label htmlFor="provider-filter">来源</label><select id="provider-filter" value={providerId} disabled={providersQuery.isPending} onChange={event => changeProvider(event.target.value)}><option value="">全部来源</option>{providers.map(provider => <option value={provider.providerId} key={provider.providerId}>{provider.displayName}</option>)}</select></div><div className="filter-field"><label htmlFor="model-filter">模型</label><select id="model-filter" value={modelSupported ? modelId : ''} disabled={!modelSupported} title={!modelSupported ? '所选来源不支持模型筛选' : undefined} onChange={event => { setModelId(event.target.value); resetPagination(); }}><option value="">全部模型</option>{models.map(model => <option value={model.id} key={model.id}>{model.id}</option>)}</select></div><div className="filter-field"><label htmlFor="bucket-filter">趋势粒度</label><select id="bucket-filter" value={bucket} disabled={page === 'sessions' || !overviewSupported} onChange={event => setBucket(event.target.value as Bucket)}><option value="day">每日</option><option value="week">每周</option><option value="month">每月</option></select></div><div className="filter-summary"><Icon name="clock" /><span>{displayRange(range)} <span className="muted">· {timezone}</span></span>{!modelSupported && <span className="filter-hint">所选来源不支持模型筛选</span>}</div></div></FilterPopover></div>
         {scan.pending || scan.job ? <Notice title={scan.job ? '扫描任务进行中' : '正在启动扫描'} action={<div className="button-group">{scan.job && !scan.pending && <button className="button button-small" onClick={scan.resume}>继续等待</button>}<button className="button button-small" disabled={!scan.job || scan.cancelling} onClick={scan.cancel}>{scan.cancelling ? '正在取消…' : '取消扫描'}</button></div>}>扫描期间可继续浏览已有数据。{scan.job && <span className="small muted">任务 {scan.job.jobId}</span>}</Notice> : scan.outcome && <div className={`scan-result-inline ${scan.outcome.state === 'failed' ? 'warning-text' : ''}`} role="status"><StatusBadge state={scan.outcome.state} />{scan.outcome.state === 'failed' ? ' 上次成功数据已保留。' : scan.outcome.state === 'cancelled' ? ' 已取消，已有快照未清空。' : demo ? ' 示例数据已刷新。' : ' 已更新用量快照。'}</div>}
         {scan.error && <ErrorNotice error={scan.error} />}{setupError !== null && <ErrorNotice error={normalizeError(setupError)} />}{!demo && providers.length > 0 && providers.every(provider => !provider.lastSuccessAt) && page !== 'settings' && <Notice title="先启用来源并扫描"><p>当前还没有采集记录。到数据来源页面点击 Codex 或 Antigravity 的“启用并扫描”；默认目录找不到时，可在设置中选择本机用量目录。</p>{page !== 'providers' && <button className="button button-small" onClick={() => { window.location.hash = 'providers'; }}>前往数据来源</button>}</Notice>}

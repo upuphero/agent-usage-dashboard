@@ -3,7 +3,7 @@ use crate::{
     profile::{DesktopProfile, PROVIDERS},
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -21,6 +21,7 @@ struct PendingDirectory {
 struct State {
     profile: DesktopProfile,
     pending: BTreeMap<String, PendingDirectory>,
+    timezone_rescans: Option<BTreeSet<String>>,
 }
 pub struct SettingsStore {
     directory: PathBuf,
@@ -33,11 +34,46 @@ impl SettingsStore {
             state: Mutex::new(State {
                 profile,
                 pending: BTreeMap::new(),
+                timezone_rescans: None,
             }),
         }
     }
     pub async fn get(&self) -> api::SettingsResult {
         view(&self.state.lock().await.profile)
+    }
+    pub async fn take_timezone_rescan(&self, providers: &[String]) -> Option<String> {
+        let mut state = self.state.lock().await;
+        if !state.profile.timezone_needs_rescan || state.timezone_rescans.is_some() {
+            return None;
+        }
+        state.timezone_rescans = Some(providers.iter().cloned().collect());
+        Some(state.profile.timezone.clone())
+    }
+    pub async fn complete_timezone_rescan(
+        &self,
+        provider: &str,
+        timezone: &str,
+    ) -> Result<(), CoreError> {
+        let mut state = self.state.lock().await;
+        if !state.profile.timezone_needs_rescan || state.profile.timezone != timezone {
+            return Ok(());
+        }
+        let Some(remaining) = &mut state.timezone_rescans else {
+            return Ok(());
+        };
+        remaining.remove(provider);
+        if !remaining.is_empty() {
+            return Ok(());
+        }
+        let mut next = state.profile.clone();
+        next.timezone_needs_rescan = false;
+        let write = next.clone();
+        let directory = self.directory.clone();
+        tokio::task::spawn_blocking(move || write.persist(&directory))
+            .await
+            .map_err(|_| CoreError::Storage)??;
+        state.profile = next;
+        Ok(())
     }
     #[cfg(test)]
     pub async fn remember_directory(
@@ -226,6 +262,45 @@ fn io_error(error: std::io::Error) -> CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn migration_rebuild_remains_pending_until_all_enabled_sources_succeed() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
+        profile.timezone = "America/Phoenix".into();
+        profile.timezone_needs_rescan = true;
+        profile.persist(directory.path()).unwrap();
+        let store = SettingsStore::new(directory.path(), profile);
+        let providers = vec!["ccusage.claude-code".into(), "ccusage.codex".into()];
+        assert_eq!(
+            store.take_timezone_rescan(&providers).await.as_deref(),
+            Some("America/Phoenix")
+        );
+        assert!(store.take_timezone_rescan(&providers).await.is_none());
+        store
+            .complete_timezone_rescan("ccusage.claude-code", "America/Phoenix")
+            .await
+            .unwrap();
+        let reopened = DesktopProfile::load_or_create(directory.path()).unwrap();
+        assert!(reopened.timezone_needs_rescan);
+        let retry = SettingsStore::new(directory.path(), reopened);
+        assert!(retry.take_timezone_rescan(&providers).await.is_some());
+        store
+            .complete_timezone_rescan("ccusage.codex", "UTC")
+            .await
+            .unwrap();
+        assert!(
+            DesktopProfile::load_or_create(directory.path())
+                .unwrap()
+                .timezone_needs_rescan
+        );
+        store
+            .complete_timezone_rescan("ccusage.codex", "America/Phoenix")
+            .await
+            .unwrap();
+        let completed = DesktopProfile::load_or_create(directory.path()).unwrap();
+        assert!(!completed.timezone_needs_rescan);
+        assert_eq!(completed.settings_revision, 1);
+    }
     #[tokio::test]
     async fn save_is_revision_checked_and_keeps_identity_and_opaque_paths() {
         let directory = tempfile::tempdir().unwrap();
