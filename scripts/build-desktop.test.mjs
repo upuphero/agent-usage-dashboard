@@ -4,10 +4,12 @@ import { buildPlan } from './build-desktop.mjs';
 test('Windows full build prepares verified resources before NSIS', () => {
   const { steps } = buildPlan([], { platform: 'win32', arch: 'x64' });
   assert.ok(steps.find(s => s.includes('scripts/verify-sidecar.mjs')));
-  assert.equal(steps.at(-1).at(-1), 'nsis');
+  assert.equal(steps.at(-1)[steps.at(-1).indexOf('--bundles') + 1], 'nsis');
+  assert.deepEqual(steps.at(-1).slice(-2), ['--', '--locked']);
 });
 test('ARM64 full build chooses DMG; local host build omits the sidecar', () => {
-  assert.equal(buildPlan([], { platform: 'darwin', arch: 'arm64' }).steps.at(-1).at(-1), 'dmg');
+  const mac = buildPlan([], { platform: 'darwin', arch: 'arm64' }).steps.at(-1);
+  assert.equal(mac[mac.indexOf('--bundles') + 1], 'dmg');
   const local = buildPlan(['--local'], { platform: 'win32', arch: 'x64' });
   assert.ok(!local.steps.some(s => s.includes('scripts/prepare-ccusage.mjs')));
   assert.ok(local.steps.at(-1).includes('--no-bundle'));

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, DatabaseName, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior, MAIN_DB};
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 use std::{
@@ -55,7 +55,7 @@ impl SqliteRepository {
         drop(reserved);
         let connection = self.connection.lock().map_err(|_| CoreError::Storage)?;
         let result = connection
-            .backup(DatabaseName::Main, destination, None)
+            .backup(MAIN_DB, destination, None)
             .map_err(storage);
         if result.is_err() {
             let _ = std::fs::remove_file(destination);
@@ -150,9 +150,7 @@ fn initialize(connection: &mut Connection, path: Option<&Path>) -> Result<(), Co
                     "pre-migration-v{version}-{}.sqlite3",
                     uuid::Uuid::new_v4()
                 ));
-                connection
-                    .backup(DatabaseName::Main, &backup, None)
-                    .map_err(storage)?;
+                connection.backup(MAIN_DB, &backup, None).map_err(storage)?;
             }
         }
         let transaction = connection

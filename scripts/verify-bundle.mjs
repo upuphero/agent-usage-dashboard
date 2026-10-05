@@ -36,7 +36,7 @@ export async function verifyBundle({ target, root, kind = 'staging', output }) {
   }
   const runtime = await verify({ target, binary: sidecarPath });
   const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-  const report = { version: config.version, target, kind, ccusageVersion: lock.version, sourceCommit: lock.sourceCommit, main: { filename: executable, bytes: main.length, sha256: hash(main) }, sidecar: { filename: basename(sidecarPath), bytes: sidecar.length, sha256: hash(sidecar) }, runtime, signingStatus: 'unverified', installationSmoke: 'unverified', minimumOs: 'unverified', runnerImage: { os: process.env.ImageOS ?? null, version: process.env.ImageVersion ?? null } };
+  const report = { version: config.version, appCommit: process.env.GITHUB_SHA ?? null, target, kind, architectureVerified: true, ccusageVersion: lock.version, sourceCommit: lock.sourceCommit, main: { filename: executable, bytes: main.length, sha256: hash(main) }, sidecar: { filename: basename(sidecarPath), bytes: sidecar.length, sha256: hash(sidecar) }, runtime, signingStatus: 'unverified', installationSmoke: kind === 'staging' ? 'unverified' : 'installed-sidecar-fixture', minimumOs: 'unverified', runnerImage: { os: process.env.ImageOS ?? null, version: process.env.ImageVersion ?? null } };
   if (output) { await mkdir(resolve(output, '..'), { recursive: true }); await writeFile(output, JSON.stringify(report, null, 2) + '\n'); }
   return report;
 }

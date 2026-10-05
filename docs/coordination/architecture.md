@@ -97,3 +97,11 @@ Provider 目录由宿主原生选择器选择并按现有 Adapter 规则校验�
 为按顺序先发布源码，现有 ci.yml 改为 workflow_dispatch，package.yml 继续只手动触发；不在初次 push 或 tag 上自动运行未验收的矩阵。v0.0.1 作为 source preview prerelease，没有安装器；Rust、实际 IPC、macOS/安装/签名后 sidecar 继续未验证。下一步需在远程 runner 完成验证后再启用自动流水线。
 
 公开准备排除 node_modules/target/dist、原生二进制、临时研究、数据库/profile、日志、截图和凭据文件；前端交付记录的个人用户目录已替换为 APPDATA 通用路径。MIT 许可与 ccusage notices 随源码发布；完整 transitive notices 仍是分发门槛。未提交其他任务未完成的研究或生成物。
+
+## 免费 GitHub Actions 原生构建集成（2026-10-04）
+
+用户授权继续完善并运行公开仓库的免费编译/打包流水线。只使用 ubuntu-24.04、windows-2022/x86_64 和 macos-15/ARM64 标准 runner，私有仓库条件跳过；无付费 runner、cache 或签名凭据。main push、PR、v* tag 和手动触发统一先执行可复用验证，再构建两平台；只有两平台安装包、包内 sidecar fixture 和 native tests 都成功才汇总资产。仅保留安装器和证据一天，不自动发布或修改现有 v0.0.1 source-preview Release/tag。
+
+本次影响先记录：Rust API 1.1.0 / UsageSource / UsageRepository / DTO 不变。Tauri 明确 custom-protocol feature，生产嵌入前端资源；构建传 --locked。Windows 使用临时 runner 上真实 NSIS 静默安装，macOS 从实际 DMG 复制 app；安装后校验固定 SHA/架构并执行 fixture，后续 native 集成测试使用安装位置的 sidecar。真实 UI、Gatekeeper/SmartScreen、最低 OS 和完整 transitive notices 尚待验收。
+
+首轮真实 Rust 编译暴露数据交付中 rusqlite 0.37 的旧 DatabaseName API：官方 v0.37.0 backup.rs 使用 MAIN_DB。主 agent 对已完成交付仅作此兼容性替换，保持 SQLite backup/迁移语义和依赖锁定不变。原始 data.md/frontend.md 不改。签名改变 sidecar 的问题仍坚持原始锁校验，等待实际打包结果；不跳过校验。
