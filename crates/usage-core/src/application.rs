@@ -346,12 +346,16 @@ impl UsageService {
                             range.start <= covered_start && range.end >= covered_end
                         })
                 });
-                if !result.buckets.contains_key(&start) && proves_empty {
-                    let mut empty = Aggregate::default();
-                    for (_, capabilities) in &zero_coverage {
-                        add_empty_coverage(&mut empty, capabilities);
+                if proves_empty {
+                    if let std::collections::btree_map::Entry::Vacant(entry) =
+                        result.buckets.entry(start)
+                    {
+                        let mut empty = Aggregate::default();
+                        for (_, capabilities) in &zero_coverage {
+                            add_empty_coverage(&mut empty, capabilities);
+                        }
+                        entry.insert(empty);
                     }
-                    result.buckets.insert(start, empty);
                 }
                 date = end;
             }

@@ -533,7 +533,7 @@ async fn empty_cache_is_not_a_zero_timeline_and_week_month_use_zero_buckets() {
 }
 
 #[tokio::test]
-async fn zero_timeline_respects_declared_coverage_boundaries() {
+async fn incomplete_standard_coverage_is_rejected_instead_of_filling_a_zero_timeline() {
     let mut bounded = snapshot(ReportKind::Daily, vec![row("2026-10-01", None, Some(5))]);
     bounded.coverage.range = Some(DateRange {
         start: date("2026-10-01"),
@@ -542,18 +542,11 @@ async fn zero_timeline_respects_declared_coverage_boundaries() {
     let (service, _, _) = setup(CollectionBatch {
         snapshots: vec![bounded],
     });
-    scan(&service, "bounded-timeline", CancellationToken::default()).await;
+    let rejected = scan(&service, "bounded-timeline", CancellationToken::default()).await;
+    assert_eq!(rejected.error, Some(CoreError::CoverageIncomplete));
     let result = service.get_overview(query()).await.unwrap();
-    assert_eq!(result.buckets.len(), 2);
-    assert_eq!(
-        result.buckets[&date("2026-10-02")]
-            .tokens
-            .total
-            .metric
-            .value,
-        Some(0)
-    );
-    assert!(!result.buckets.contains_key(&date("2026-10-03")));
+    assert!(result.buckets.is_empty());
+    assert_eq!(result.aggregate.tokens.total.metric.value, None);
 }
 
 #[tokio::test]
