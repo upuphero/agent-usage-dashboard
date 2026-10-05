@@ -107,3 +107,5 @@ Provider 目录由宿主原生选择器选择并按现有 Adapter 规则校验�
 首轮真实 Rust 编译暴露数据交付中 rusqlite 0.37 的旧 DatabaseName API：官方 v0.37.0 backup.rs 使用 MAIN_DB。主 agent 对已完成交付仅作此兼容性替换，保持 SQLite backup/迁移语义和依赖锁定不变。原始 data.md/frontend.md 不改。签名改变 sidecar 的问题仍坚持原始锁校验，等待实际打包结果；不跳过校验。
 
 macOS 打包增量影响（实施前记录）：已核对锁定 Tauri CLI v2.8.4 官方 bundler 源码，externalBin 会被重新 codesign，破坏运行期坚持的原始 SHA。采用官方 macOS.files 将原始锁定 sidecar 逐字节放到 Contents/MacOS/ccusage，避免重签来源程序；主程序/.app 仍 ad-hoc 签名。构建先验证原始 SHA、架构、fixture 和 sidecar 现有代码签名；从实际 DMG 安装后再验证原始 SHA、嵌套签名结构和 fixture。没有新的运行时 hash 预期、没有关闭校验、没有签名凭据或 Developer ID 信任声明。平台配置和构建测试由主 agent 管理，数据 runner 不改。
+
+首次原生验证结果：8d735a1 上 Windows NSIS、macOS ARM64 DMG 已构建；两平台各 48 项默认 Rust tests 和 3 项显式 native tests 实际通过（受控 runner、SQLite、DTO、三次扫描/重启、未知 reasoning）。宿主严格 clippy 阻断两平台资产，诊断为 composition 两个复杂 tuple 返回类型与 Settings 一个多余 unit expression。主 agent 只提取宿主内类型别名、移除冗余表达式；API/领域/存储语义不变，不降低 lint 门槛。下一轮将从实际安装器验证 sidecar，再执行安装位置 native tests 和 clippy。纯 Markdown/许可/ignore 改动不重复触发完整编译，tag/手动仍可构建。

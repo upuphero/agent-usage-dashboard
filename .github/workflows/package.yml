@@ -3,7 +3,9 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore', '.gitattributes']
   pull_request:
+    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore', '.gitattributes']
   workflow_dispatch:
 permissions:
   contents: read
@@ -56,8 +58,6 @@ jobs:
         run: cargo test -p usage-core -p usage-contracts -p usage-adapters -p usage-desktop --release --features usage-desktop/custom-protocol --locked --target ${{ matrix.target }}
       - name: Native sidecar and host integration tests
         run: cargo test -p usage-adapters -p usage-desktop --release --features usage-desktop/custom-protocol --locked --target ${{ matrix.target }} -- --ignored
-      - name: Native host lint
-        run: cargo clippy -p usage-desktop --release --features custom-protocol --all-targets --locked --target ${{ matrix.target }} -- -D warnings
       - name: Install Windows NSIS and verify installed binaries
         if: runner.os == 'Windows'
         shell: pwsh
@@ -67,6 +67,8 @@ jobs:
         run: bash scripts/smoke-macos.sh
       - name: Test the installed sidecar through native adapters and host
         run: cargo test -p usage-adapters -p usage-desktop --release --features usage-desktop/custom-protocol --locked --target ${{ matrix.target }} -- --ignored
+      - name: Native host lint
+        run: cargo clippy -p usage-desktop --release --features custom-protocol --all-targets --locked --target ${{ matrix.target }} -- -D warnings
       - name: Stage only the installer and build evidence
         run: node scripts/stage-package.mjs ${{ matrix.target }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

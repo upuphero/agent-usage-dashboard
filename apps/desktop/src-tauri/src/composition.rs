@@ -8,35 +8,20 @@ use std::{
 use usage_adapters::{ClaudeCodeAdapter, ProcessRunner, SqliteRepository};
 use usage_core::{Clock, CoreError, SourceConfig, UsageService};
 pub struct SystemClock;
+type Composition = (
+    Arc<UsageService>,
+    BTreeMap<String, SourceConfig>,
+    Arc<SettingsStore>,
+);
 impl Clock for SystemClock {
     fn now(&self) -> chrono::DateTime<chrono::Utc> {
         chrono::Utc::now()
     }
 }
-pub fn bootstrap(
-    app_data_dir: &Path,
-    executable_dir: &Path,
-) -> Result<
-    (
-        Arc<UsageService>,
-        BTreeMap<String, SourceConfig>,
-        Arc<SettingsStore>,
-    ),
-    CoreError,
-> {
+pub fn bootstrap(app_data_dir: &Path, executable_dir: &Path) -> Result<Composition, CoreError> {
     assemble(app_data_dir, &sidecar_path(executable_dir)?)
 }
-fn assemble(
-    app_data_dir: &Path,
-    executable: &Path,
-) -> Result<
-    (
-        Arc<UsageService>,
-        BTreeMap<String, SourceConfig>,
-        Arc<SettingsStore>,
-    ),
-    CoreError,
-> {
+fn assemble(app_data_dir: &Path, executable: &Path) -> Result<Composition, CoreError> {
     let profile = DesktopProfile::load_or_create(app_data_dir)?;
     let settings = Arc::new(SettingsStore::new(app_data_dir, profile.clone()));
     let repository = Arc::new(SqliteRepository::open(app_data_dir.join("usage.db"))?);

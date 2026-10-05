@@ -98,10 +98,7 @@ impl SettingsStore {
                     next.claude_directory_ref = None;
                 }
                 Some(reference)
-                    if state.profile.claude_root_path.is_some() && reference == current =>
-                {
-                    ()
-                }
+                    if state.profile.claude_root_path.is_some() && reference == current => {}
                 Some(reference) => {
                     let pending = state
                         .pending
