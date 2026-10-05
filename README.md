@@ -27,7 +27,7 @@ Track local AI agent usage on Windows and macOS.
 | 语言与显示设置 | 默认中文，可切换英文并保存偏好；深色、浅色、跟随系统主题 |
 | 统计设置 | 来源开关与统计时区持久化 |
 
-**0.0.6 更新：** 默认中文界面，右上角语言图标可切换英文并保存偏好。页面、筛选、状态和图表文字统一切换，保留当前筛选与图表状态。[实现与验证进度](docs/ci-validation/0.0.6-language-switch.md)
+**0.0.6 更新：** 默认中文界面，右上角语言图标可切换英文并保存偏好。页面、筛选、状态和图表文字统一切换，保留当前筛选与图表状态。Windows/macOS 构建、原生测试和安装验证已通过。[更新与构建记录](docs/ci-validation/0.0.6-language-switch.md)
 
 0.0.5 已修复本地统计日期：新配置采用系统时区，旧 UTC 默认配置升级时自动迁移并重新扫描。[已验证的 0.0.5 构建](docs/ci-validation/0.0.5-local-time.md)
 
@@ -54,7 +54,7 @@ Track local AI agent usage on Windows and macOS.
 
 Windows 运行需要 **WebView2 Runtime**。NSIS 安装器包含下载引导，便携版依赖系统已安装的 WebView2。安装包已内置采集器，使用者无需另装 Node.js、Rust 或 ccusage。
 
-Windows 包当前未签名；macOS 使用 ad-hoc 签名，尚未完成 Developer ID 签名与公证。真实 GUI 全流程、干净机安装、最低系统版本和用户数据升级场景仍待完整验收。[0.0.5 构建证据](docs/ci-validation/0.0.5-local-time.md)
+Windows 包当前未签名；macOS 使用 ad-hoc 签名，尚未完成 Developer ID 签名与公证。真实 GUI 全流程、干净机安装、最低系统版本和用户数据升级场景仍待完整验收。[0.0.6 构建证据](docs/ci-validation/0.0.6-language-switch.md)
 
 ## 快速开始
 
