@@ -1,11 +1,12 @@
 import type { Accuracy, Metric } from '../api/generated/usage';
+import { localeFor, translate, type Language, type MessageKey } from '../i18n/messages';
 
-export const accuracyLabels: Record<Accuracy, string> = {
+export const accuracyLabels: Record<Accuracy, MessageKey> = {
   exact: '来源报告', derived: '推导值', estimated: '估算', unavailable: '不可用',
 };
-export function formatTokens(value: string | null): string {
-  if (value === null) return '不可用';
-  try { return new Intl.NumberFormat('en-US').format(BigInt(value)); } catch { return '不可用'; }
+export function formatTokens(value: string | null, language: Language = 'zh'): string {
+  if (value === null) return translate(language, '不可用');
+  try { return new Intl.NumberFormat(localeFor(language)).format(BigInt(value)); } catch { return translate(language, '不可用'); }
 }
 
 /** Chinese reading aid only; the exact decimal string remains the primary value. */
@@ -27,31 +28,34 @@ export function formatChineseMagnitude(value: string | null, locale = 'zh-CN'): 
 }
 
 /** Compact axis text. All rounding is done with integers, never unsafe token Numbers. */
-export function formatChartCount(value: string): string {
+export function formatChartCount(value: string, language: Language = 'zh'): string {
   const number = BigInt(value);
-  for (const [scale, unit] of [[1_000_000_000_000n, '万亿'], [100_000_000n, '亿'], [10_000n, '万']] as const) {
+  const units = language === 'zh' ? [[1_000_000_000_000n, '万亿'], [100_000_000n, '亿'], [10_000n, '万']] as const
+    : [[1_000_000_000_000n, 'T'], [1_000_000_000n, 'B'], [1_000_000n, 'M'], [1_000n, 'K']] as const;
+  for (const [scale, unit] of units) {
     if (number < scale) continue;
     const tenths = (number * 10n + scale / 2n) / scale;
     return `${tenths / 10n}${tenths % 10n ? `.${tenths % 10n}` : ''}${unit}`;
   }
   return number.toString();
 }
-export function formatUsd(value: string | null): string {
-  if (value === null || !/^\d+(?:\.\d+)?$/.test(value)) return '不可用';
+export function formatUsd(value: string | null, language: Language = 'zh'): string {
+  if (value === null || !/^\d+(?:\.\d+)?$/.test(value)) return translate(language, '不可用');
   const [whole, fraction = ''] = value.split('.');
   if (BigInt(whole) === 0n && /[1-9]/.test(fraction) && (fraction.padEnd(2, '0').slice(0, 2) === '00')) return '< $0.01';
   const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0').slice(0, 2)) + (Number(fraction[2] ?? '0') >= 5 ? 1n : 0n);
   return `$${new Intl.NumberFormat('en-US').format(cents / 100n)}.${(cents % 100n).toString().padStart(2, '0')}`;
 }
-export function formatTime(value: string | null, timezone: string): string {
-  if (!value) return '尚无记录';
+export function formatTime(value: string | null, timezone: string, language: Language = 'zh'): string {
+  if (!value) return translate(language, '尚无记录');
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '时间不可用';
-  return new Intl.DateTimeFormat('zh-CN', { timeZone: timezone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+  if (Number.isNaN(date.getTime())) return translate(language, '时间不可用');
+  return new Intl.DateTimeFormat(localeFor(language), { timeZone: timezone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
 }
-export function qualityDescription(metric: Metric<string>): string {
-  if (metric.value === null) return '来源未提供该字段，不能视为零。';
-  return `${accuracyLabels[metric.accuracy]} · ${metric.knownRows} 条已知记录${metric.missingRows ? ` · ${metric.missingRows} 条缺失，仅显示已知部分` : ''}`;
+export function qualityDescription(metric: Metric<string>, language: Language = 'zh'): string {
+  if (metric.value === null) return translate(language, '来源未提供该字段，不能视为零。');
+  return translate(language, '{accuracy} · {count} 条已知记录', { accuracy: translate(language, accuracyLabels[metric.accuracy]), count: metric.knownRows })
+    + (metric.missingRows ? translate(language, ' · {count} 条缺失，仅显示已知部分', { count: metric.missingRows }) : '');
 }
 
 /** Scale chart geometry only. Never convert token strings to unsafe JS integers. */

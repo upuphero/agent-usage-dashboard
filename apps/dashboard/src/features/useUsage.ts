@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useUsageClient } from '../app/UsageContext';
 import type { ExportRequest, OverviewQuery, SessionQuery, ScanSummary, UpdateSettingsRequest } from '../api/generated/usage';
 import { apiError, assertResponseVersion, normalizeError } from '../api/protocol';
+import { useI18n } from '../i18n/I18nContext';
 
 export function useApiInfo() {
   const client = useUsageClient();
@@ -59,10 +60,12 @@ export function useScan(timezone: string) {
 
 export function useExport() {
   const client = useUsageClient();
-  return useMutation({ mutationFn: async (request: ExportRequest) => assertResponseVersion(await client.exportUsage(request)) });
+  const { language } = useI18n();
+  return useMutation({ mutationFn: async (request: ExportRequest) => assertResponseVersion(await client.exportUsage(request, language)) });
 }
 export function useSettings(enabled: boolean) {
   const client = useUsageClient(); const cache = useQueryClient();
+  const { language } = useI18n();
   const query = useQuery({ queryKey: ['usage', 'settings'], enabled: enabled && !!client.getSettings, queryFn: async () => {
     if (!client.getSettings) throw apiError('UNSUPPORTED_FILTER', '当前客户端没有设置接口。');
     return assertResponseVersion(await client.getSettings());
@@ -73,7 +76,7 @@ export function useSettings(enabled: boolean) {
   }, onSuccess: async result => { cache.setQueryData(['usage', 'settings'], result); await cache.invalidateQueries({ queryKey: ['usage'], predicate: value => !['api', 'settings'].includes(String(value.queryKey[1])) }); } });
   const choose = useMutation({ mutationFn: async (providerId: string) => {
     if (!client.chooseProviderDirectory) throw apiError('UNSUPPORTED_FILTER', '当前客户端没有目录选择接口。');
-    return assertResponseVersion(await client.chooseProviderDirectory(providerId));
+    return assertResponseVersion(await client.chooseProviderDirectory(providerId, language));
   } });
   return { query, save, choose, canRead: !!client.getSettings, canWrite: !!client.updateSettings, canChoose: !!client.chooseProviderDirectory };
 }

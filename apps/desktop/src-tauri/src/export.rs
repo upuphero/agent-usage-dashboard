@@ -155,6 +155,7 @@ pub async fn save(
     app: tauri::AppHandle,
     runtime: Arc<Runtime>,
     request: api::ExportRequest,
+    language: Option<&str>,
 ) -> Result<api::ExportResult, api::ApiError> {
     use tauri_plugin_dialog::DialogExt;
     let format = request.format;
@@ -168,11 +169,13 @@ pub async fn save(
     }
     .to_owned();
     let suggested_filename = filename.clone();
+    let title = dialog_title(format, language);
     // Runs outside the webview thread; only the native dialog supplies a path. No file/shell permission in UI.
     let worker = tokio::task::spawn_blocking(move || {
         let destination = app
             .dialog()
             .file()
+            .set_title(title)
             .set_file_name(filename)
             .blocking_save_file()
             .ok_or_else(|| mapping::error(core::CoreError::Cancelled))?;
@@ -194,9 +197,37 @@ pub async fn save(
     })
 }
 
+fn dialog_title(format: api::ExportFormat, language: Option<&str>) -> &'static str {
+    match (format, language == Some("en")) {
+        (api::ExportFormat::Json, true) => "Export JSON history archive",
+        (api::ExportFormat::Csv, true) => "Export CSV usage report",
+        (api::ExportFormat::Json, false) => "导出 JSON 完整历史归档",
+        (api::ExportFormat::Csv, false) => "导出 CSV 用量报表",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn export_titles_follow_the_ui_language_without_changing_the_format() {
+        assert_eq!(
+            dialog_title(api::ExportFormat::Json, None),
+            "导出 JSON 完整历史归档"
+        );
+        assert_eq!(
+            dialog_title(api::ExportFormat::Csv, Some("zh")),
+            "导出 CSV 用量报表"
+        );
+        assert_eq!(
+            dialog_title(api::ExportFormat::Json, Some("en")),
+            "Export JSON history archive"
+        );
+        assert_eq!(
+            dialog_title(api::ExportFormat::Csv, Some("en")),
+            "Export CSV usage report"
+        );
+    }
     #[test]
     fn csv_quotes_and_neutralizes_formulas() {
         assert_eq!(csv_cell("=1+1"), "\"'=1+1\"");

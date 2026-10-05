@@ -4,7 +4,7 @@
 
 Track local AI agent usage on Windows and macOS.
 
-[![Desktop packages](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml/badge.svg)](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml) [![Version](https://img.shields.io/badge/version-0.0.5-75d9c4)](docs/ci-validation/0.0.5-local-time.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Desktop packages](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml/badge.svg)](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml) [![Version](https://img.shields.io/badge/version-0.0.6-75d9c4)](docs/ci-validation/0.0.6-language-switch.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Windows x64 · macOS Apple Silicon ARM64 · 本地存储 · 默认离线采集**
 
@@ -24,9 +24,12 @@ Track local AI agent usage on Windows and macOS.
 | 数据来源管理 | 启用或关闭来源、选择日志目录、手动扫描、查看状态与覆盖范围 |
 | 数据质量说明 | 区分来源报告、推导、估算与不可用字段，保留缺失价格和部分覆盖提示 |
 | 导出 | 导出 JSON 完整历史归档或当前筛选范围的 CSV 报表 |
-| 显示与统计设置 | 深色、浅色、跟随系统主题；来源开关与统计时区持久化 |
+| 语言与显示设置 | 默认中文，可切换英文并保存偏好；深色、浅色、跟随系统主题 |
+| 统计设置 | 来源开关与统计时区持久化 |
 
-**0.0.5 更新：** 新配置默认采用系统本地时区。旧版本留下的 UTC 默认配置会在升级时迁移，并自动重新扫描已启用来源，从原始日志重新计算当地日期的用量。[查看更新与验证记录](docs/ci-validation/0.0.5-local-time.md)
+**0.0.6 更新：** 默认中文界面，右上角语言图标可切换英文并保存偏好。页面、筛选、状态和图表文字统一切换，保留当前筛选与图表状态。[实现与验证进度](docs/ci-validation/0.0.6-language-switch.md)
+
+0.0.5 已修复本地统计日期：新配置采用系统时区，旧 UTC 默认配置升级时自动迁移并重新扫描。[已验证的 0.0.5 构建](docs/ci-validation/0.0.5-local-time.md)
 
 ## 下载安装
 
@@ -60,6 +63,8 @@ Windows 包当前未签名；macOS 使用 ad-hoc 签名，尚未完成 Developer
 3. 默认目录未找到时，进入 **Settings / 设置**，为相应来源选择本机日志目录，保存后重新扫描。
 4. 回到 **Overview / 用量概览**，查看最近 30 天用量，也可切换今日、本周、本月以及来源、模型和图表粒度。
 5. 需要保存报表时，在设置页面导出 JSON 或 CSV。
+
+右上角主题按钮旁的语言图标可在中文和英文之间切换。首次使用默认中文，语言偏好保存在当前浏览器或桌面 WebView 中；切换语言会保留当前页面、筛选和图表状态。
 
 日常采集目前通过手动完整扫描触发。**刷新视图**重新读取缓存中的统计；采集新产生的用量请点击来源卡片上的 **扫描来源**。扫描失败时保留上次成功结果并提示状态。
 

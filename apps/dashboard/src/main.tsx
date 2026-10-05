@@ -4,10 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App } from './app/App';
 import { createClient } from './app/createClient';
 import { UsageProvider } from './app/UsageContext';
+import { I18nProvider } from './i18n/I18nContext';
 import './styles.css';
 
 const { client, demo, scenario } = createClient(window.location.search);
 const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000, refetchOnWindowFocus: false }, mutations: { retry: false } } });
 createRoot(document.getElementById('root')!).render(
-  <StrictMode><QueryClientProvider client={cache}><UsageProvider client={client}><App demo={demo} scenario={scenario} /></UsageProvider></QueryClientProvider></StrictMode>,
+  <StrictMode><I18nProvider><QueryClientProvider client={cache}><UsageProvider client={client}><App demo={demo} scenario={scenario} /></UsageProvider></QueryClientProvider></I18nProvider></StrictMode>,
 );

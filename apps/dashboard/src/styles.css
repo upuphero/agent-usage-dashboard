@@ -74,6 +74,7 @@ nav { display: grid; gap: 7px; }
 .breadcrumb { font-size: 12px; color: var(--muted); }
 .breadcrumb span { padding: 0 12px; color: var(--border); }
 .topbar-right { display: flex; align-items: center; gap: 20px; }
+.topbar-actions { display: inline-flex; align-items: center; gap: 6px; }
 .platform-label { color: var(--muted); font-size: 10px; }
 .main-content { max-width: 1560px; margin: 0 auto; padding: 28px 38px 0; }
 .main-content:focus { outline: none; }
@@ -81,10 +82,12 @@ nav { display: grid; gap: 7px; }
 .skip-link:focus { top: 10px; }
 .demo-banner { display: flex; align-items: center; gap: 14px; border: 1px solid var(--accent-line); background: var(--accent-bg); border-radius: 10px; padding: 14px 18px; margin-bottom: 28px; }
 .demo-banner strong { font-size: 12px; font-weight: 600; }
+.demo-banner > div { flex: 1; min-width: 0; }
 .demo-banner p { color: var(--muted); font-size: 11px; margin-top: 3px; }
 .demo-label { background: var(--accent); color: var(--bg); font-size: 9px; padding: 5px 7px; border-radius: 4px; font-weight: 800; letter-spacing: .7px; }
 .demo-select-label { margin-left: auto; display: flex; align-items: center; gap: 10px; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .demo-select-label select { font-size: 11px; padding: 7px 28px 7px 9px; width: 130px; }
+:root[lang^="en"] .demo-select-label select { width: 170px; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 26px; }
 .page-heading .muted { font-size: 12px; margin-top: 6px; }
 .page-heading .eyebrow { color: var(--accent); }
@@ -94,6 +97,8 @@ nav { display: grid; gap: 7px; }
 .button-small { padding: 7px 11px; font-size: 11px; }
 .button-group { display: flex; align-items: center; gap: 8px; }
 .icon-button { background: transparent; border: 0; width: 32px; height: 32px; padding: 6px; color: var(--muted); }
+.language-toggle { width: auto; min-width: 54px; gap: 5px; }
+.language-toggle span { font-size: 10px; font-weight: 650; }
 select { appearance: auto; background: var(--input); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 10px 12px; max-width: 100%; font-size: 12px; line-height: 1.5; }
 input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 .filter-panel { display: grid; grid-template-columns: 1.15fr 1fr 1.2fr .75fr; gap: 16px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); padding: 17px 20px 12px; margin-bottom: 24px; }

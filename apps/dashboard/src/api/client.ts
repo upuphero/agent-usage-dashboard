@@ -8,9 +8,9 @@ export interface UsageClient {
   cancelScan(jobId: string): Promise<void>;
   getOverview(query: OverviewQuery): Promise<OverviewResult>;
   listSessions(query: SessionQuery): Promise<SessionPage>;
-  exportUsage(request: ExportRequest): Promise<ExportResult>;
+  exportUsage(request: ExportRequest, language?: 'zh' | 'en'): Promise<ExportResult>;
   /** API 1.1 extension: callers check capabilities and method presence for older clients. */
   getSettings?(): Promise<SettingsResult>;
   updateSettings?(request: UpdateSettingsRequest): Promise<SettingsResult>;
-  chooseProviderDirectory?(providerId: string): Promise<ChooseProviderDirectoryResult>;
+  chooseProviderDirectory?(providerId: string, language?: 'zh' | 'en'): Promise<ChooseProviderDirectoryResult>;
 }

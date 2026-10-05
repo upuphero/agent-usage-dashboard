@@ -12,6 +12,7 @@ pub fn get_api_info(state: State<'_, Arc<Runtime>>) -> api::ApiInfo {
         "scan-events".into(),
         "export-json-full-history".into(),
         "export-csv".into(),
+        "localized-dialogs".into(),
     ];
     if state.service.sources.is_empty() {
         capabilities.push("adapter-integration-pending".into());
@@ -103,8 +104,9 @@ pub async fn export_usage(
     app: tauri::AppHandle,
     state: State<'_, Arc<Runtime>>,
     request: api::ExportRequest,
+    language: Option<String>,
 ) -> Result<api::ExportResult, api::ApiError> {
-    crate::export::save(app, state.inner().clone(), request).await
+    crate::export::save(app, state.inner().clone(), request, language.as_deref()).await
 }
 
 #[tauri::command]
@@ -125,6 +127,7 @@ pub async fn choose_provider_directory(
     app: tauri::AppHandle,
     state: State<'_, Arc<Runtime>>,
     request: api::ChooseProviderDirectoryRequest,
+    language: Option<String>,
 ) -> Result<api::ChooseProviderDirectoryResult, api::ApiError> {
     use tauri_plugin_dialog::DialogExt;
     state
@@ -134,11 +137,7 @@ pub async fn choose_provider_directory(
     if !state.settings_available() {
         return Err(mapping::error(usage_core::CoreError::UnsupportedFilter));
     }
-    let title = match request.provider_id.as_str() {
-        "ccusage.codex" => "选择 Codex 数据目录（.codex 或 sessions）",
-        "ccusage.antigravity" => "选择 Antigravity 数据目录或 conversations",
-        _ => "选择 Claude 配置目录或 projects 目录",
-    };
+    let title = directory_title(&request.provider_id, language.as_deref());
     let picked = tokio::task::spawn_blocking(move || {
         app.dialog().file().set_title(title).blocking_pick_folder()
     })
@@ -161,4 +160,32 @@ pub async fn choose_provider_directory(
         provider_id: request.provider_id,
         directory,
     })
+}
+
+fn directory_title(provider: &str, language: Option<&str>) -> &'static str {
+    match (provider, language == Some("en")) {
+        ("ccusage.codex", true) => "Choose Codex data directory (.codex or sessions)",
+        ("ccusage.antigravity", true) => "Choose Antigravity data directory or conversations",
+        (_, true) => "Choose Claude configuration or projects directory",
+        ("ccusage.codex", false) => "选择 Codex 数据目录（.codex 或 sessions）",
+        ("ccusage.antigravity", false) => "选择 Antigravity 数据目录或 conversations",
+        (_, false) => "选择 Claude 配置目录或 projects 目录",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn directory_dialog_language_defaults_to_chinese_and_supports_english() {
+        for provider in [
+            "ccusage.codex",
+            "ccusage.antigravity",
+            "ccusage.claude-code",
+        ] {
+            assert!(directory_title(provider, None).starts_with("选择"));
+            assert!(directory_title(provider, Some("zh")).starts_with("选择"));
+            assert!(directory_title(provider, Some("en")).starts_with("Choose"));
+        }
+    }
 }

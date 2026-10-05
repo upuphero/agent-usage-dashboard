@@ -23,9 +23,9 @@ export class TauriUsageClient implements UsageClient {
 
   constructor(private readonly send: CommandInvoker = desktopInvoke, private readonly pollMs = 750) {}
 
-  private async command<T>(command: string, request?: unknown): Promise<T> {
+  private async command<T>(command: string, request?: unknown, language?: 'zh' | 'en'): Promise<T> {
     try {
-      return await this.send<T>(command, request === undefined ? undefined : { request });
+      return await this.send<T>(command, request === undefined ? undefined : { request, ...(language ? { language } : {}) });
     } catch (reason) { throw normalizeError(reason); }
   }
 
@@ -56,15 +56,16 @@ export class TauriUsageClient implements UsageClient {
   async listSessions(request: SessionQuery): Promise<SessionPage> {
     return assertResponseVersion(await this.negotiated<SessionPage>(COMMANDS.listSessions, request));
   }
-  async exportUsage(request: ExportRequest): Promise<ExportResult> {
-    return assertResponseVersion(await this.negotiated<ExportResult>(COMMANDS.exportUsage, request));
+  async exportUsage(request: ExportRequest, language: 'zh' | 'en' = 'zh'): Promise<ExportResult> {
+    const info = await this.getApiInfo();
+    return assertResponseVersion(await this.command<ExportResult>(COMMANDS.exportUsage, request, info.capabilities.includes('localized-dialogs') ? language : undefined));
   }
-  private async settingsCommand<T extends { apiVersion: string }>(capability: string, command: string, request?: unknown): Promise<T> {
+  private async settingsCommand<T extends { apiVersion: string }>(capability: string, command: string, request?: unknown, language?: 'zh' | 'en'): Promise<T> {
     const info = await this.getApiInfo();
     if (!info.capabilities.includes(capability)) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。');
-    return assertResponseVersion(await this.command<T>(command, request));
+    return assertResponseVersion(await this.command<T>(command, request, info.capabilities.includes('localized-dialogs') ? language : undefined));
   }
   getSettings(): Promise<SettingsResult> { return this.settingsCommand('settings-read', COMMANDS.getSettings); }
   updateSettings(request: UpdateSettingsRequest): Promise<SettingsResult> { return this.settingsCommand('settings-write', COMMANDS.updateSettings, request); }
-  chooseProviderDirectory(providerId: string): Promise<ChooseProviderDirectoryResult> { return this.settingsCommand('source-directory-selection', COMMANDS.chooseProviderDirectory, { providerId }); }
+  chooseProviderDirectory(providerId: string, language: 'zh' | 'en' = 'zh'): Promise<ChooseProviderDirectoryResult> { return this.settingsCommand('source-directory-selection', COMMANDS.chooseProviderDirectory, { providerId }, language); }
 }

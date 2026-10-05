@@ -16,6 +16,7 @@ const paths = {
   bolt: 'M13 2L4 14h7l-1 8 10-13h-7l0-7',
   shield: 'M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3 M8 12l3 3 5-6',
   sun: 'M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1 1 M18 18l1 1 M5 19l1-1 M18 6l1-1 M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10',
+  language: 'M4 5h12 M10 3v2 M6 5c0 5 3 8 7 10 M14 5c0 5-3 8-9 11 M14 21l4-10 4 10 M15.5 17h5',
 } as const;
 export type IconName = keyof typeof paths;
 export function Icon({ name, className = '' }: { name: IconName; className?: string }) {
