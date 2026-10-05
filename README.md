@@ -1,10 +1,12 @@
 # Agent Usage Dashboard
 
-**v0.0.1：首次公开源码预览。** 免费 GitHub Actions 已实际生成 Windows x64 NSIS 和 macOS Apple Silicon ARM64 DMG，并通过两平台安装后的 sidecar/backend 检查。[构建与下载](docs/GITHUB_ACTIONS.md) · [验收证据](docs/ci-validation/2026-10-04.md) · [源码首发说明](docs/releases/v0.0.1.md)
+**0.0.2：Windows 免安装 + Codex / Antigravity。** 两平台免费 Actions 已通过，Windows 提供解压即用 ZIP 和 NSIS，Mac 提供 ARM64 DMG。[最新构建与使用](docs/ci-validation/0.0.2-codex-antigravity.md) · [流水线](docs/GITHUB_ACTIONS.md) · [旧源码首发](docs/releases/v0.0.1.md)
 
 Windows x64 / macOS Apple Silicon ARM64 的本地 AI 用量桌面应用。Tauri 2 + React/TypeScript + Rust Core + SQLite + 锁定 ccusage sidecar；不开发 Intel Mac。
 
-开发状态：API 1.1.0、前端与数据交付已集成。CI 已通过前端 38 项、Node/SQL 16 项、两平台各 51 项 Rust/native 测试及严格 clippy；安装后再次执行 3 项 native 测试，包含受控 ccusage、SQLite、三次扫描/重启和 DTO。Windows 安装器 3.95 MiB，Mac DMG 4.93 MiB。真实 UI/IPC、最低 OS、完整依赖 notices 和正式签名仍待验收；本机依然缺 MSVC/SDK，没有安装系统组件。
+开发状态：API 1.1.0 保持兼容，已接入 Claude Code、Codex、Antigravity。CI 已通过前端 38、Node/SQL 16、两平台各 53 个默认及 4 个 native Rust tests、严格 clippy、安装/免安装解压后再次执行的 4 个 native tests。Windows ZIP 5.52 MiB / NSIS 4.01 MiB / Mac DMG 5.00 MiB。新后端已在本机只读扫描真实 Codex/Antigravity，两个来源 succeeded，私人用量未上传。真实 GUI 全流程、最低 OS、完整依赖 notices 和正式签名仍待验收；本机 MSVC/SDK 未安装。
+
+Windows 免安装：先退出旧版，解压整个 portable.zip，双击 usage-desktop.exe，并保留同目录 ccusage.exe。进入数据来源分别点击 Codex/Antigravity 的“启用并扫描”；默认目录找不到时在设置选择目录。默认显示最近 30 天；未扫描与未知字段显示不可用，不冒充零。需要系统已有 WebView2；配置/缓存仍保存到用户应用数据目录，与安装版共享历史。
 
 ```text
 pnpm install --frozen-lockfile
@@ -39,7 +41,9 @@ node scripts/prepare-notices.mjs --check
 
 macOS 在 ARM64 主机使用对应 target。build 脚本拒绝跨目标、Intel Mac 与 universal。Windows 配置 NSIS + WebView2 下载引导；macOS 配置 ARM64 DMG + ad-hoc 开发签名，13.0 是暂定 deployment target，最低兼容系统仍待实测。macOS 使用官方文件映射保留已校验 sidecar 的上游签名与原始字节，运行期继续坚持锁中原始 SHA。
 
-桌面首次启动在 Tauri 应用数据目录创建 `profile.json` 和 `usage.db`，扫描默认关闭。Settings 页面已接入读取/保存统计时区、来源开关和原生目录选择；UI 只传目录引用，版本冲突需重新读取，扫描中不能改配置。保存保持 deviceId/claudeDatasetId；设置文件丢失而 DB 已存在时拒绝生成新 ID，防止同一数据集重复计数。时区改变需重扫，旧 Daily 不会被伪造重分桶。Mock 设置仅保留当前页面会话且不访问磁盘；真实保存/原生选择仍待 Rust/IPC 验收。
+桌面首次启动在 Tauri 应用数据目录创建 `profile.json` 和 `usage.db`，扫描默认关闭。Settings 支持三个 Provider，目录引用绑定 Provider，版本冲突需重读，扫描中不能改配置。profile v1 → v2 保留 device/Claude dataset，为新增来源各自持久化 UUID；旧二进制不能读取新版 profile，需先退出旧版本。配置丢失而 DB 已存在时拒绝新身份。时区改变需重扫，旧 Daily 不会伪造重分桶。Mock 设置仅当前页面会话有效、不访问磁盘。
+
+Codex 读取用户 .codex/sessions 与 archived_sessions；Antigravity 读取已知本机 conversation .db，当前锁定版本不支持 .pb，界面 warning 标明未纳入范围。冻结输入只含用量白名单元数据，不复制认证/用户配置/正文或整个数据库。源统计和价格使用固定 ccusage，公共聚合/快照替换仍只在 Core。费用为 API 等价估算，未记录的 Codex 档位按标准估算；未提供的模型拆分显示 unavailable。
 
 native 合成测试只读测试 fixture，不访问真实日志。在有编译工具的终端准备资源、设置 `CCUSAGE_TEST_BINARY` 为其绝对路径，再执行：
 

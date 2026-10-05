@@ -2,7 +2,7 @@
 
 仓库必须保持 public。只用免费标准 GitHub-hosted runner：
 
-2026-10-04 本地日期的首次完整验收已通过：[Actions run 37251178175](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37251178175)。构建 commit 为 `fae5666d3c74688fa38fefca6a90ee703bf1974f`，集中 artifact 名称 `desktop-installers-fae5666d3c74688fa38fefca6a90ee703bf1974f`，保留一天；本地已下载并重新校验两份安装器 SHA-256。[完整证据](ci-validation/2026-10-04.md)
+最新 0.0.2：[Actions run 37258630412](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37258630412)，commit `0b4cab88b0601e02908ce64aa9f42e5277e122ce`，集中 artifact `desktop-installers-0b4cab88b0601e02908ce64aa9f42e5277e122ce`。含 Windows 免安装 ZIP、NSIS 和 Mac ARM64 DMG，全部检查通过，本地重新校验三份文件 SHA。[证据与使用](ci-validation/0.0.2-codex-antigravity.md)。旧 0.0.1 验收记录保留，不修改其 tag/Release。
 
 | 工作 | runner | Rust target | 安装器 |
 | --- | --- | --- | --- |
@@ -29,6 +29,7 @@ tag 必须与 package.json、Cargo workspace/lock、Tauri 和前端显示版本�
 两平台都成功才运行 collect。集中 artifact 包含：
 
 - Windows NSIS 和 macOS ARM64 DMG。
+- Windows x64 portable.zip，解压后直接运行；独立 portable-manifest.json 验证解压后的主程序/sidecar。
 - 各平台 `bundle-manifest.json`：从实际安装器得到的主程序/sidecar 架构、固定 hash、fixture 运行结果和 runner image。
 - 各平台 `build-info.json`、ccusage MIT notices。
 - `SHA256SUMS`（相对于解压后的集中目录）、`size-report.json`。

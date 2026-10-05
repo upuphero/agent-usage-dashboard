@@ -127,3 +127,9 @@ Windows NSIS 4146040 bytes（3.95 MiB）；Mac ARM64 DMG 5167856 bytes（4.93 Mi
 Settings/profile 扩展为多个 Provider，目录引用绑定 provider，迁移保持已有 device/Claude dataset 身份，为新增来源创建并持久化独立 dataset；不默认扫描。首次使用提供明确“启用并扫描”入口、来源不可读诊断、近期范围。只读提取本机用量，不读认证文件，不把聊天正文/源数据库提交或上传；fixtures 全部合成。
 
 Windows 增加免安装 ZIP：主 exe、锁定 ccusage.exe、必要 resources/notices 同目录；CI 验证解压包架构/hash/fixture/native tests。数据仍保存在应用用户目录，便于免安装与安装版共享身份/历史；ZIP 不承诺完全不依赖系统 WebView2。两平台正式签名/最低系统/真实 UI 仍按实际证据报告，不扩大 Core 耦合。此迭代使用应用 0.0.2 区别于旧 v0.0.1 测试包，不修改旧 tag/Release。
+
+0.0.2 增量已验证并集成 main：run 37258630412 / 0b4cab88b0601e02908ce64aa9f42e5277e122ce，五 jobs success；前端 38/Node SQL 16/Linux Rust 36/各平台默认 53 + native 4 + 安装或便携目录再跑 4 tests、strict clippy 均通过。Windows portable ZIP 5784690 bytes（5.52 MiB）、NSIS 4206115 bytes、ARM64 DMG 5244007 bytes，本地再次验证三份 SHA。
+
+已在本机执行便携包的无界面诊断（不改旧 GUI/profile/cache），新 Rust 受控 runner/冻结元数据/Adapter/Core/SQLite/DTO 链路读取真实 Codex 和 Antigravity，两扫描 succeeded。私人统计只放忽略的 artifacts/private-usage；不提交、不上传，不读取认证文件。不是用 Mock 或独立 CLI 结果冒充新版后端。未知字段、Antigravity 多模型推理拆分、.pb 未支持等限制保留 warning/nullable；正式 GUI全点击和真实 Mac 数据仍未验收。
+
+profile v1 → v2 原子迁移已加测试：保留既有 device/Claude dataset，新增来源独立稳定 UUID，拒绝新版 profile 被旧二进制读取。Settings 支持多 Provider，目录引用绑定来源。Default range 最近30天，关闭来源有“启用并扫描”入口。本次旧 v0.0.1 tag/Release 保持不变，未发布正式安装器。详细证据与操作见 ../ci-validation/0.0.2-codex-antigravity.md。

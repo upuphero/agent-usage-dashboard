@@ -1,6 +1,8 @@
 # 剩余工作与验收顺序
 
-更新：2026-10-04。应用 0.0.1 / API 1.1.0；仅 Windows x64、macOS Apple Silicon ARM64。
+更新：2026-10-04。应用 0.0.2 / API 1.1.0；仅 Windows x64、macOS Apple Silicon ARM64。
+
+新增 Codex / Antigravity 与 Windows portable ZIP 已完成：[run 37258630412](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37258630412) 全部通过；本机便携包的新 Rust 后端已只读扫描真实两来源并 succeeded，私人结果未上传。profile v2 迁移保留旧身份、每来源独立 UUID，多 Provider 设置与“启用并扫描”、最近30天范围已落地。Antigravity .pb 未纳入、模型输出拆分不足时保持 unknown；完整真实 GUI 点击流程和真实 Mac 数据仍待验收。[0.0.2 证据与操作](../ci-validation/0.0.2-codex-antigravity.md)
 
 | 优先级 | 工作 | 当前状态 / 具体出口 |
 | --- | --- | --- |

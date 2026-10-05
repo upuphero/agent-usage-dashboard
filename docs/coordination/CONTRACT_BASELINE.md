@@ -1,6 +1,6 @@
 # 接口基线
 
-状态：**基线和两份交付已集成，Settings 兼容扩展已落地**。静态/前端检查通过；Rust 编译验收阻塞（本机缺 MSVC/SDK，用户决定不安装），macOS 未验证。契约版本 **1.1.0**（兼容原 1.0 查询/扫描）；应用开发版本 **0.0.1**。仅 Windows x64 / macOS Apple Silicon ARM64。
+状态：**接口基线已就绪，三来源与多 Provider Settings 已集成**。两平台原生 tests/clippy/安装检查已通过；本机 MSVC/SDK 仍按用户要求不安装。契约 **1.1.0**（兼容原 1.0 查询/扫描）；应用 **0.0.2**，新增 Windows 免安装 ZIP。仅 Windows x64 / macOS Apple Silicon ARM64。
 
 ## 归属与交接
 
@@ -20,7 +20,7 @@
 - 生成入口 `scripts/generate-contracts.mjs` 读取 contracts 的受限 Rust schema 宏；Node 即可运行。未知语法/类型拒绝生成；扩展契约需扩展生成器并测试，不另手写 DTO。
 - 前端抽象：`apps/dashboard/src/api/client.ts`；前端 agent 实现 MockUsageClient / TauriUsageClient，并在入口注入。页面与 hooks 不调用 invoke。
 - 数据 agent 实现 `UsageSource`、`UsageRepository`；进程 runner / SQLite row / migrations 仅存在于 adapters。请公开组装入口并在 data.md 写明签名，主 agent再接入桌面宿主。
-- Claude Code 约定 productId=`claude-code`，建议 providerId=`ccusage.claude-code`；Codex/Antigravity 后续为 `ccusage.codex` / `ccusage.antigravity`。页面应按返回 descriptor 使用 ID，不硬编码 Provider 业务规则。
+- 已接入 product/provider：`claude-code` / `ccusage.claude-code`、`codex` / `ccusage.codex`、`antigravity` / `ccusage.antigravity`。页面按 descriptor 使用 ID，不实现 Provider 统计算法。
 
 ## 传输与约定
 
@@ -42,7 +42,7 @@
 - getSettings / updateSettings / chooseProviderDirectory 是 UsageClient 的可选扩展；客户端按 settings-read/settings-write/source-directory-selection 能力协商。旧 1.0 服务保持查询/扫描可用，并禁用设置写入。
 - SettingsResult 包含十进制 revision、timezone、providers（providerId/enabled/directory）、采集说明。directory 只有 directoryRef 与脱敏 label，没有绝对路径。
 - 更新传 `{expectedRevision,timezone,providers:[{providerId,enabled,directoryRef}]}`；null directoryRef 使用默认目录，当前或新选择的引用沿用对应目录。版本冲突返回 SETTINGS_CONFLICT；未知/过期引用返回 INVALID_DIRECTORY_REF。
-- 目录选择由宿主原生对话框完成，取消成功返回 directory=null；不是前端文件上传。引用有效期 5 分钟，保存后持久化。当前仅 Claude Source；开关默认关闭；路径迁移保持 dataset/device 身份，不清空历史。
+- 目录选择由宿主原生对话框完成，取消成功返回 directory=null；引用有效期 5 分钟并绑定 Provider，保存后持久化。三个来源开关默认关闭；“启用并扫描”明确启动采集。每个 Provider 有独立持久 dataset，迁移保持 device/已有 Claude 身份，不清空历史。
 - 扫描活动中返回 SCAN_BUSY，退出中返回 SHUTTING_DOWN；成功原子持久化后才替换运行期配置。时区改变不重新分桶旧快照。新增错误码集合也由 contracts 生成 ERROR_CODES，前端不再手写另一份列表。
 
 ## 数据端必须遵循
