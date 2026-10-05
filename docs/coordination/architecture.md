@@ -109,3 +109,11 @@ Provider 目录由宿主原生选择器选择并按现有 Adapter 规则校验�
 macOS 打包增量影响（实施前记录）：已核对锁定 Tauri CLI v2.8.4 官方 bundler 源码，externalBin 会被重新 codesign，破坏运行期坚持的原始 SHA。采用官方 macOS.files 将原始锁定 sidecar 逐字节放到 Contents/MacOS/ccusage，避免重签来源程序；主程序/.app 仍 ad-hoc 签名。构建先验证原始 SHA、架构、fixture 和 sidecar 现有代码签名；从实际 DMG 安装后再验证原始 SHA、嵌套签名结构和 fixture。没有新的运行时 hash 预期、没有关闭校验、没有签名凭据或 Developer ID 信任声明。平台配置和构建测试由主 agent 管理，数据 runner 不改。
 
 首次原生验证结果：8d735a1 上 Windows NSIS、macOS ARM64 DMG 已构建；两平台各 48 项默认 Rust tests 和 3 项显式 native tests 实际通过（受控 runner、SQLite、DTO、三次扫描/重启、未知 reasoning）。宿主严格 clippy 阻断两平台资产，诊断为 composition 两个复杂 tuple 返回类型与 Settings 一个多余 unit expression。主 agent 只提取宿主内类型别名、移除冗余表达式；API/领域/存储语义不变，不降低 lint 门槛。下一轮将从实际安装器验证 sidecar，再执行安装位置 native tests 和 clippy。纯 Markdown/许可/ignore 改动不重复触发完整编译，tag/手动仍可构建。
+
+## 免费原生 CI 验收已完成
+
+[run 37251178175](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37251178175) / commit fae5666d3c74688fa38fefca6a90ee703bf1974f 的 5 个 jobs 全部 success。前端 38、Node/SQL 16、各平台 51 项 Rust/native tests 和严格 clippy 通过；从实际 NSIS 安装 / DMG 复制 app 后，原始锁 SHA/架构/Unicode 空格路径/fixture 验证和重复 3 项 native tests 通过。Mac ad-hoc 与上游 sidecar 原始签名共存，codesign --verify --deep --strict 成功，固定 sidecar bytes/hash 没有改变。
+
+Windows NSIS 4146040 bytes（3.95 MiB）；Mac ARM64 DMG 5167856 bytes（4.93 MiB）。两平台集中 artifact 已生成，含相对路径 SHA256SUMS、size-report、bundle-manifest、build-info 和 ccusage notices；保留一天，本地下载后再次实际校验两安装器 hash。完整尺寸、hash、image、签名与验证边界见 ../ci-validation/2026-10-04.md。安装器二进制只在忽略的 artifacts 目录，不提交。
+
+接口基线已就绪，API 1.1.0 / 各端口不变；前端、数据已完成交付并集成。纯文档最终状态更新不触发重复完整编译。仍待真实 UI/IPC、最低 OS/干净机器/升级、完整 transitive notices、正式签名和用户日志验收。本机 MSVC/SDK 仍按用户要求不安装，远程成功不冒充本机编译成功。v0.0.1 旧 source-preview tag/Release 不变；不自动发布二进制或配置凭据。

@@ -2,6 +2,8 @@
 
 仓库必须保持 public。只用免费标准 GitHub-hosted runner：
 
+2026-10-04 本地日期的首次完整验收已通过：[Actions run 37251178175](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37251178175)。构建 commit 为 `fae5666d3c74688fa38fefca6a90ee703bf1974f`，集中 artifact 名称 `desktop-installers-fae5666d3c74688fa38fefca6a90ee703bf1974f`，保留一天；本地已下载并重新校验两份安装器 SHA-256。[完整证据](ci-validation/2026-10-04.md)
+
 | 工作 | runner | Rust target | 安装器 |
 | --- | --- | --- | --- |
 | 契约、前端、Core、Adapter 验证 | ubuntu-24.04 | runner 原生 | 无 Linux 桌面产品 |
@@ -14,7 +16,7 @@ Actions artifact 存储仍与账户/Packages 共用额度：[计费说明](https
 
 ## 触发与产物
 
-`package.yml` 在 main push、pull request、`v*` tag、workflow_dispatch 触发。它先复用 `ci.yml`，检查锁文件、生成契约、依赖边界、版本、Node/前端/Rust tests 与 clippy，再运行两平台构建。`ci.yml` 也可以单独手动触发。
+`package.yml` 在代码/config 的 main push、pull request、`v*` tag、workflow_dispatch 触发；纯 Markdown/许可/ignore 改动跳过自动构建。它先复用 `ci.yml`，检查锁文件、生成契约、依赖边界、版本、Node/前端/Rust tests 与 clippy，再运行两平台构建。`ci.yml` 也可以单独手动触发。
 
 ```text
 gh workflow run package.yml --repo upuphero/agent-usage-dashboard --ref main

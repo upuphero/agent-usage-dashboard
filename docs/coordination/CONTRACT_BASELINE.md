@@ -76,16 +76,16 @@ pnpm boundaries:check
 pnpm version:check
 ```
 
-`cargo test` 默认排除桌面主机，Ubuntu 的纯 Core 检查不要求 WebKit 或 sidecar。桌面本地无 sidecar 验证使用 tauri.local.conf.json；发行构建必须准备真实、锁定且验证过的本目标 sidecar，禁止用占位程序冒充。macOS 在本机不可执行，状态保持未验证。
+`cargo test` 默认排除桌面主机，Ubuntu 的纯 Core 检查不要求 WebKit 或 sidecar。桌面本地无 sidecar 验证使用 tauri.local.conf.json；发行构建必须准备真实、锁定且验证过的本目标 sidecar，禁止用占位程序冒充。macOS 在本机不可执行；现已由免费 macos-15 ARM64 runner 实际完成编译、DMG/安装后的 sidecar/native 验证。Windows 同样由 windows-2022 x64 runner 验证；本机 MSVC/SDK 不安装。
 
 ## 待办与变更流程
 
 主 agent：Core 业务和内存测试、DTO 映射、薄 commands、任务生命周期、依赖组装、导出、构建/CI；前端：Dashboard/Mock/transport/组件测试；数据：Claude Code parser/runner/SQLite/fixture/sidecar 锁。
 
-主 agent 上述业务/宿主/导出/构建代码已落地，已读取两份交付并完成真实 SQLite/Claude adapter 注入及 Settings 集成。前端 38 项测试和数据/主脚本 14 项复验通过，Windows 原生 CLI fixture 通过。完整 Rust/真实 IPC 闭环仍待能编译的环境验收。所有文件及验证详情见 architecture.md。
+主 agent 上述业务/宿主/导出/构建代码已落地，已读取两份交付并完成真实 SQLite/Claude adapter 注入及 Settings 集成。前端 38 项、数据/主脚本 16 项、各平台 51 项 Rust/native tests、安装后重复的 3 项 native tests 与严格 clippy 已实际通过。真实 UI/IPC 交互仍待验收。接口基线已就绪，前端和数据均已交付并完成集成；文件及验证详情见 architecture.md。
 
 SessionPage 的 total/分页按 dataset/session 唯一会话计数，Core 合并模型明细时保留 missingRows；日期过滤用整个 session 的最后活动时间。API DTO 不变，Core 查询结果 SessionEntry 为业务视图（不再将 ReportRow 直接带给宿主）；Provider/Repository 端口及采集 ReportRow 不变。
 
-2026-10-04 最新验证：typecheck、lint、38 tests、生产构建（95 modules，JS 279.94 kB / CSS 19.95 kB），14 Node/SQL tests，contracts:check、boundaries:check、version:check、cargo fmt；浏览器实际验证 Mock 设置保存、扫描开关与目录引用。Tauri info 明确报告无 MSVC/SDK；Core/contract/host Rust tests、clippy、真实桌面编译未通过验收，不得宣传为绿灯。
+2026-10-04 最新验证：[run 37251178175](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37251178175) 的五个 jobs 全部通过，代码 commit fae5666d3c74688fa38fefca6a90ee703bf1974f。Windows NSIS 3.95 MiB / Mac ARM64 DMG 4.93 MiB；安装后原始 sidecar SHA、Unicode/空格路径、fixture 和 native tests 实际通过。集中安装器/证据/SHA256SUMS 保留一天，未发布正式 Release。API 1.1.0 不变；详见 [验收证据](../ci-validation/2026-10-04.md)。真实 UI/最低 OS/正式签名/完整 notices 保持待办。
 
 破坏性接口调整先在 architecture.md 记录原因、影响、迁移和新版本，再统一改契约及生成结果；不得无说明改变已交接语义。各 agent 在自己的交付记录列出实装入口、验证命令/结果、限制和待办。主 agent读取这些记录后集成。

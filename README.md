@@ -1,10 +1,10 @@
 # Agent Usage Dashboard
 
-**v0.0.1：首次公开源码预览。** 当前没有 Windows/macOS 安装器；完整原生编译、实际 IPC 与安装验收仍待完成。[版本说明](docs/releases/v0.0.1.md)
+**v0.0.1：首次公开源码预览。** 免费 GitHub Actions 已实际生成 Windows x64 NSIS 和 macOS Apple Silicon ARM64 DMG，并通过两平台安装后的 sidecar/backend 检查。[构建与下载](docs/GITHUB_ACTIONS.md) · [验收证据](docs/ci-validation/2026-10-04.md) · [源码首发说明](docs/releases/v0.0.1.md)
 
 Windows x64 / macOS Apple Silicon ARM64 的本地 AI 用量桌面应用。Tauri 2 + React/TypeScript + Rust Core + SQLite + 锁定 ccusage sidecar；不开发 Intel Mac。
 
-开发状态：API 1.1.0、Dashboard/Mock/Tauri transport 和 Claude Code 数据代码已交付。宿主已改为真实 SQLite + 固定 ccusage runner + ClaudeCodeAdapter 的依赖组装，持久化设备/数据集 UUID，加入三次扫描/重启的 native 测试入口。前端 38 项和 Node 脚本/SQL 14 项检查通过，Windows 原生 CLI fixture 通过；完整 Rust/Tauri/SQLite runner 链路在本机因缺 MSVC/SDK 尚未验收，macOS 未验证。不能视为可发布软件。
+开发状态：API 1.1.0、前端与数据交付已集成。CI 已通过前端 38 项、Node/SQL 16 项、两平台各 51 项 Rust/native 测试及严格 clippy；安装后再次执行 3 项 native 测试，包含受控 ccusage、SQLite、三次扫描/重启和 DTO。Windows 安装器 3.95 MiB，Mac DMG 4.93 MiB。真实 UI/IPC、最低 OS、完整依赖 notices 和正式签名仍待验收；本机依然缺 MSVC/SDK，没有安装系统组件。
 
 ```text
 pnpm install --frozen-lockfile
@@ -48,6 +48,6 @@ cargo test -p usage-adapters --test native_pipeline --locked -- --ignored
 cargo test -p usage-desktop --locked -- --ignored
 ```
 
-包内检查入口 `scripts/verify-bundle.mjs` 验证主程序架构、具体包位置的 sidecar 哈希并运行同一套合成 fixture。[GitHub Actions](docs/GITHUB_ACTIONS.md) 使用 public repo 的免费标准 Windows x64/macOS ARM64 runner，main push、PR、tag 或手动触发；先验证，再构建并从真实 NSIS/DMG 验证安装程序。两平台都成功才提供集中 artifact 和 SHA256SUMS，保留一天，不自动发布 Release。当前首次原生流水线正在验收，完整 notices、真实 UI/IPC、最低 OS 和正式签名仍待完成。
+包内检查入口 `scripts/verify-bundle.mjs` 验证主程序架构、具体安装位置的 sidecar 哈希并运行同一套合成 fixture。[GitHub Actions](docs/GITHUB_ACTIONS.md) 使用 public repo 的免费标准 Windows x64/macOS ARM64 runner，代码/config 的 main push、PR、tag 或手动触发；先验证，再构建并从真实 NSIS/DMG 检查安装程序。两平台都成功才提供集中 artifact 和 SHA256SUMS，保留一天，不自动发布 Release。Windows 未签名，Mac 为 ad-hoc 签名，无 Developer ID/公证。
 
 协作入口：`docs/coordination/CONTRACT_BASELINE.md`、`architecture.md`；前端维护 `frontend.md`，数据维护 `data.md`。API 请求范围 `[start,end)`、token 字符串、未知值 null。Overview 只统计标准 Daily，Sessions 展示会话累计用量，禁止两个报表相加。费用始终是 API 等价估算成本。
