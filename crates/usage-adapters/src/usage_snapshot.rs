@@ -181,12 +181,12 @@ fn capture_codex(
             .pointer("/payload/type")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if !matches!(
+        let supported = matches!(
             entry,
             "session_meta" | "turn_context" | "token_usage_record" | "compacted" | "turn.completed"
-        ) && !(entry == "event_msg"
-            && matches!(event, "token_count" | "thread_settings_applied"))
-        {
+        ) || (entry == "event_msg"
+            && matches!(event, "token_count" | "thread_settings_applied"));
+        if !supported {
             continue;
         }
         let mut clean = selected(
