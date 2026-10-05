@@ -139,3 +139,5 @@ profile v1 → v2 原子迁移已加测试：保留既有 device/Claude dataset�
 用户要求每日完整数字只在悬停显示、筛选收为图标展开、增加曲线图并将趋势放概览最前、精确数字下补中文量级。1,855,654,157 正确量级为18亿5565万（约），不是1亿8千万。只改展示/交互：使用API原始字符串的BigInt格式，图形比例计算不改变业务值；未知值/缺失时间区间不填零，不改变统计、价格、Provider/SQLite或API1.1.0。
 
 曲线默认、保留柱状切换，完整数值tooltip支持鼠标/键盘/触摸，轴标签稀疏显示。筛选按钮默认折叠、显示当前查询摘要，保留原有查询参数与能力限制，支持Escape/外部点击关闭。中文量级只在中文UI显示，精确值始终保留。前端任务已交付，主agent做用户指定的目标修改，不启动agent、不改原始frontend.md/data.md。应用增量为0.0.3；继续免费标准runner输出Windows免安装/NSIS和ARM64 DMG。
+
+0.0.3 图形优先 UI 已完成：实际浏览器验证30个大数值点、完整数值提示与方向键、曲线/柱状切换、紧凑筛选/外部关闭/Escape/能力联动、中文量级；1180和800桌面窗口无横向溢出、console无warn/error。41前端tests通过；新图形不改变API1.1.0或统计值。免费 run37261635910 / 3e6cb88b2e75fe2e99aff07c5debd0ce3fa65066 五jobs全通过，各平台native/安装或解压/lint/原始sidecar门槛保持通过。Windows ZIP5778704 bytes/NSIS4203562 bytes/Mac DMG5244795 bytes已下载重新核对hash；证据见../ci-validation/0.0.3-chart-readability.md。截图/合成压力预览仅本地忽略目录，未上传，也不把浏览器Mock验收当真实Tauri点击验收。数据/历史/profile2保持不变，不改旧tag或发布凭据。

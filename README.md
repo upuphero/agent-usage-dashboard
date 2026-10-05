@@ -1,6 +1,6 @@
 # Agent Usage Dashboard
 
-**0.0.2：Windows 免安装 + Codex / Antigravity。** 两平台免费 Actions 已通过，Windows 提供解压即用 ZIP 和 NSIS，Mac 提供 ARM64 DMG。[最新构建与使用](docs/ci-validation/0.0.2-codex-antigravity.md) · [流水线](docs/GITHUB_ACTIONS.md) · [旧源码首发](docs/releases/v0.0.1.md)
+**0.0.3：曲线趋势优先、图标筛选、完整数值提示、中文量级。** 两平台免费 Actions 已通过，Windows 提供解压即用 ZIP 和 NSIS，Mac 提供 ARM64 DMG。Codex / Antigravity / Claude Code 统计与历史继续保留。[最新构建与使用](docs/ci-validation/0.0.3-chart-readability.md) · [来源范围](docs/ci-validation/0.0.2-codex-antigravity.md) · [流水线](docs/GITHUB_ACTIONS.md)
 
 Windows x64 / macOS Apple Silicon ARM64 的本地 AI 用量桌面应用。Tauri 2 + React/TypeScript + Rust Core + SQLite + 锁定 ccusage sidecar；不开发 Intel Mac。
 

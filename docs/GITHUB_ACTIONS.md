@@ -2,7 +2,7 @@
 
 仓库必须保持 public。只用免费标准 GitHub-hosted runner：
 
-最新 0.0.2：[Actions run 37258630412](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37258630412)，commit `0b4cab88b0601e02908ce64aa9f42e5277e122ce`，集中 artifact `desktop-installers-0b4cab88b0601e02908ce64aa9f42e5277e122ce`。含 Windows 免安装 ZIP、NSIS 和 Mac ARM64 DMG，全部检查通过，本地重新校验三份文件 SHA。[证据与使用](ci-validation/0.0.2-codex-antigravity.md)。旧 0.0.1 验收记录保留，不修改其 tag/Release。
+最新 0.0.3：[Actions run 37261635910](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37261635910)，commit `3e6cb88b2e75fe2e99aff07c5debd0ce3fa65066`，集中 artifact `desktop-installers-3e6cb88b2e75fe2e99aff07c5debd0ce3fa65066`。Windows 免安装 ZIP/NSIS、Mac ARM64 DMG 全部通过，本地重新校验三份文件 SHA。[证据与使用](ci-validation/0.0.3-chart-readability.md)。旧验收记录保留，不修改既有 tag/Release。
 
 | 工作 | runner | Rust target | 安装器 |
 | --- | --- | --- | --- |
