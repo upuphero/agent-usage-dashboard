@@ -37,7 +37,7 @@ node scripts/verify-sidecar.mjs --target x86_64-pc-windows-msvc
 node scripts/prepare-notices.mjs --check
 ```
 
-macOS 在 ARM64 主机使用对应 target。build 脚本拒绝跨目标、Intel Mac 与 universal。Windows 配置 NSIS + WebView2 下载引导；macOS 配置 ARM64 DMG + ad-hoc 开发签名，13.0 是暂定 deployment target，最低兼容系统仍待实测。运行期坚持锁中原始二进制 SHA；若签名改变 sidecar 字节，包内验证会失败，签名后的可信身份机制尚未实现，不会静默跳过校验。
+macOS 在 ARM64 主机使用对应 target。build 脚本拒绝跨目标、Intel Mac 与 universal。Windows 配置 NSIS + WebView2 下载引导；macOS 配置 ARM64 DMG + ad-hoc 开发签名，13.0 是暂定 deployment target，最低兼容系统仍待实测。macOS 使用官方文件映射保留已校验 sidecar 的上游签名与原始字节，运行期继续坚持锁中原始 SHA。
 
 桌面首次启动在 Tauri 应用数据目录创建 `profile.json` 和 `usage.db`，扫描默认关闭。Settings 页面已接入读取/保存统计时区、来源开关和原生目录选择；UI 只传目录引用，版本冲突需重新读取，扫描中不能改配置。保存保持 deviceId/claudeDatasetId；设置文件丢失而 DB 已存在时拒绝生成新 ID，防止同一数据集重复计数。时区改变需重扫，旧 Daily 不会被伪造重分桶。Mock 设置仅保留当前页面会话且不访问磁盘；真实保存/原生选择仍待 Rust/IPC 验收。
 
@@ -48,6 +48,6 @@ cargo test -p usage-adapters --test native_pipeline --locked -- --ignored
 cargo test -p usage-desktop --locked -- --ignored
 ```
 
-包内检查入口 `scripts/verify-bundle.mjs` 验证主程序架构、具体包位置的 sidecar 哈希并运行同一套合成 fixture；Windows staging 验证不冒充安装验证。完整 notices 库存、真实 IPC、安装烟测与正式签名仍是安装器发布门槛。现有 GitHub Actions 文件仅允许手动触发，尚未执行；自动 Windows x64/macOS ARM64 编译打包流水线是源码首发后的下一步，当前不提供任何签名凭据。
+包内检查入口 `scripts/verify-bundle.mjs` 验证主程序架构、具体包位置的 sidecar 哈希并运行同一套合成 fixture。[GitHub Actions](docs/GITHUB_ACTIONS.md) 使用 public repo 的免费标准 Windows x64/macOS ARM64 runner，main push、PR、tag 或手动触发；先验证，再构建并从真实 NSIS/DMG 验证安装程序。两平台都成功才提供集中 artifact 和 SHA256SUMS，保留一天，不自动发布 Release。当前首次原生流水线正在验收，完整 notices、真实 UI/IPC、最低 OS 和正式签名仍待完成。
 
 协作入口：`docs/coordination/CONTRACT_BASELINE.md`、`architecture.md`；前端维护 `frontend.md`，数据维护 `data.md`。API 请求范围 `[start,end)`、token 字符串、未知值 null。Overview 只统计标准 Daily，Sessions 展示会话累计用量，禁止两个报表相加。费用始终是 API 等价估算成本。

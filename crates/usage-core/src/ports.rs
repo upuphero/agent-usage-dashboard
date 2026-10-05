@@ -37,22 +37,6 @@ impl CancellationToken {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn cancellation_and_commit_have_one_winner() {
-        let cancelled = CancellationToken::default();
-        cancelled.cancel();
-        assert_eq!(cancelled.begin_commit(), Err(CoreError::Cancelled));
-        assert!(!cancelled.commit_started());
-        let committing = CancellationToken::default();
-        committing.begin_commit().unwrap();
-        committing.cancel();
-        assert!(!committing.is_cancelled());
-        assert!(committing.commit_started());
-    }
-}
 pub trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
 }
@@ -79,4 +63,21 @@ pub trait UsageRepository: Send + Sync {
     async fn save_scan(&self, scan: ScanRecord) -> Result<(), CoreError>;
     async fn get_scan(&self, job_id: &str) -> Result<Option<ScanRecord>, CoreError>;
     async fn list_scans(&self, provider_id: &str) -> Result<Vec<ScanRecord>, CoreError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cancellation_and_commit_have_one_winner() {
+        let cancelled = CancellationToken::default();
+        cancelled.cancel();
+        assert_eq!(cancelled.begin_commit(), Err(CoreError::Cancelled));
+        assert!(!cancelled.commit_started());
+        let committing = CancellationToken::default();
+        committing.begin_commit().unwrap();
+        committing.cancel();
+        assert!(!committing.is_cancelled());
+        assert!(committing.commit_started());
+    }
 }

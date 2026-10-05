@@ -18,6 +18,8 @@ export function buildPlan(argv, host = process) {
   if (target !== native) throw new Error('Only native matching-target builds are supported; Intel Mac, universal and cross builds are excluded.');
   const steps = [['node', 'scripts/verify-version.mjs'], ['node', 'scripts/generate-contracts.mjs', '--check'], ['node', 'scripts/check-boundaries.mjs'], ['node', 'scripts/prepare-notices.mjs', '--check']];
   if (!local) steps.push(['node', 'scripts/prepare-ccusage.mjs', '--target', target], ['node', 'scripts/verify-sidecar.mjs', '--target', target]);
+  // Keep the upstream ARM64 signature and locked bytes; Tauri signs our app, not the pinned sidecar.
+  if (!local && target === 'aarch64-apple-darwin') steps.push(['codesign', '--verify', '--strict', 'apps/desktop/src-tauri/binaries/ccusage-aarch64-apple-darwin']);
   steps.push(['pnpm', '--filter', '@usage/desktop', 'exec', 'tauri', 'build', '--target', target, ...(local ? ['--no-bundle', '--config', 'src-tauri/tauri.local.conf.json'] : ['--bundles', target === 'x86_64-pc-windows-msvc' ? 'nsis' : 'dmg']), '--', '--locked']);
   return { target, local, steps };
 }

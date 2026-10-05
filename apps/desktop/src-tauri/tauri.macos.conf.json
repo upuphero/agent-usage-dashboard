@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "externalBin": [],
+    "macOS": {
+      "files": {
+        "MacOS/ccusage": "binaries/ccusage-aarch64-apple-darwin"
+      }
+    }
+  }
+}
