@@ -10,6 +10,8 @@ test('collection accepts only native installed evidence for the exact version an
   const build = { appCommit: commit, target };
   const expected = { target, version: '0.0.1', commit, entry };
   verifyEvidence(bundle, build, expected);
+  verifyEvidence({ ...bundle, kind: 'portable' }, build, { ...expected, kind: 'portable' });
+  assert.throws(() => verifyEvidence(bundle, build, { ...expected, kind: 'portable' }));
   for (const change of [{ appCommit: 'c'.repeat(40) }, { version: '0.0.2' }, { target: 'aarch64-apple-darwin' }, { kind: 'staging' }, { architectureVerified: false }, { runtime: { target, runtimeVerified: false } }, { sidecar: { sha256: 'c'.repeat(64), bytes: 100 } }]) {
     assert.throws(() => verifyEvidence({ ...bundle, ...change }, build, expected));
   }

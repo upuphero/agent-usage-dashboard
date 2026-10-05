@@ -1,4 +1,7 @@
-use crate::{mapping, profile::DesktopProfile};
+use crate::{
+    mapping,
+    profile::{DesktopProfile, PROVIDERS},
+};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -8,8 +11,10 @@ use tokio::sync::Mutex;
 use usage_contracts as api;
 use usage_core::{CoreError, SourceConfig};
 
+#[cfg(test)]
 const PROVIDER: &str = "ccusage.claude-code";
 struct PendingDirectory {
+    provider_id: String,
     path: String,
     expires: Instant,
 }
@@ -34,11 +39,23 @@ impl SettingsStore {
     pub async fn get(&self) -> api::SettingsResult {
         view(&self.state.lock().await.profile)
     }
+    #[cfg(test)]
     pub async fn remember_directory(
         &self,
         path: PathBuf,
     ) -> Result<api::SourceDirectory, api::ApiError> {
-        let path = tokio::task::spawn_blocking(move || validate_directory(&path))
+        self.remember_directory_for(PROVIDER, path).await
+    }
+    pub async fn remember_directory_for(
+        &self,
+        provider_id: &str,
+        path: PathBuf,
+    ) -> Result<api::SourceDirectory, api::ApiError> {
+        if !PROVIDERS.contains(&provider_id) {
+            return Err(mapping::error(CoreError::ProviderNotFound));
+        }
+        let provider = provider_id.to_owned();
+        let path = tokio::task::spawn_blocking(move || validate_directory_for(&provider, &path))
             .await
             .map_err(|_| mapping::error(CoreError::Storage))?
             .map_err(mapping::error)?;
@@ -53,13 +70,14 @@ impl SettingsStore {
         state.pending.insert(
             reference.clone(),
             PendingDirectory {
+                provider_id: provider_id.into(),
                 path,
                 expires: Instant::now() + Duration::from_secs(300),
             },
         );
         Ok(api::SourceDirectory {
             directory_ref: reference,
-            label: "已选择自定义 Claude 日志目录".into(),
+            label: "已选择自定义用量目录".into(),
         })
     }
     pub async fn update(
@@ -71,7 +89,15 @@ impl SettingsStore {
             .expected_revision
             .parse::<u64>()
             .map_err(|_| mapping::error(CoreError::InvalidQuery))?;
-        if revision.to_string() != request.expected_revision || request.providers.len() > 1 {
+        let unique: std::collections::BTreeSet<_> = request
+            .providers
+            .iter()
+            .map(|value| &value.provider_id)
+            .collect();
+        if revision.to_string() != request.expected_revision
+            || request.providers.len() > 3
+            || unique.len() != request.providers.len()
+        {
             return Err(mapping::error(CoreError::InvalidQuery));
         }
         let mut state = self.state.lock().await;
@@ -84,37 +110,35 @@ impl SettingsStore {
         let mut next = state.profile.clone();
         next.timezone = request.timezone;
         for update in request.providers {
-            if update.provider_id != PROVIDER {
-                return Err(mapping::error(CoreError::ProviderNotFound));
-            }
-            let current = state
-                .profile
-                .claude_directory_ref
-                .as_deref()
-                .unwrap_or("configured");
+            let mut provider = next.provider(&update.provider_id).map_err(mapping::error)?;
+            let current = provider.directory_ref.as_deref().unwrap_or("configured");
             match update.directory_ref {
                 None => {
-                    next.claude_root_path = None;
-                    next.claude_directory_ref = None;
+                    provider.root_path = None;
+                    provider.directory_ref = None;
                 }
-                Some(reference)
-                    if state.profile.claude_root_path.is_some() && reference == current => {}
+                Some(reference) if provider.root_path.is_some() && reference == current => {}
                 Some(reference) => {
                     let pending = state
                         .pending
                         .get(&reference)
-                        .filter(|entry| entry.expires > Instant::now())
+                        .filter(|entry| {
+                            entry.expires > Instant::now()
+                                && entry.provider_id == update.provider_id
+                        })
                         .ok_or_else(|| {
                             settings_error(
                                 api::ErrorCode::InvalidDirectoryRef,
                                 "目录引用无效或已过期，请重新选择。",
                             )
                         })?;
-                    next.claude_root_path = Some(pending.path.clone());
-                    next.claude_directory_ref = Some(reference);
+                    provider.root_path = Some(pending.path.clone());
+                    provider.directory_ref = Some(reference);
                 }
             }
-            next.claude_enabled = update.enabled;
+            provider.enabled = update.enabled;
+            next.set_provider(&update.provider_id, provider)
+                .map_err(mapping::error)?;
         }
         next.settings_revision = next
             .settings_revision
@@ -127,13 +151,7 @@ impl SettingsStore {
             .map_err(|_| mapping::error(CoreError::Storage))?
             .map_err(mapping::error)?;
         state.profile = next;
-        let configs = BTreeMap::from([(
-            PROVIDER.into(),
-            SourceConfig {
-                enabled: state.profile.claude_enabled,
-                root_path: state.profile.claude_root_path.clone(),
-            },
-        )]);
+        let configs = state.profile.configs();
         Ok((view(&state.profile), configs))
     }
 }
@@ -150,21 +168,21 @@ fn view(profile: &DesktopProfile) -> api::SettingsResult {
         api_version: api::API_VERSION.into(),
         revision: profile.settings_revision.to_string(),
         timezone: profile.timezone.clone(),
-        providers: vec![api::ProviderSettings {
-            provider_id: PROVIDER.into(),
-            enabled: profile.claude_enabled,
-            directory: profile
-                .claude_root_path
+        providers: PROVIDERS.iter().filter_map(|id| profile.provider(id).ok().map(|provider| api::ProviderSettings {
+            provider_id: (*id).into(),
+            enabled: provider.enabled,
+            directory: provider
+                .root_path
                 .as_ref()
                 .map(|_| api::SourceDirectory {
-                    directory_ref: profile
-                        .claude_directory_ref
+                    directory_ref: provider
+                        .directory_ref
                         .clone()
                         .unwrap_or_else(|| "configured".into()),
-                    label: "已配置自定义 Claude 日志目录".into(),
+                    label: "已配置自定义用量目录".into(),
                 }),
-        }],
-        collection_notice: "启用后，仅从所选 Claude 日志目录提取用量；正文不持久化、不上传。"
+        })).collect(),
+        collection_notice: "启用并扫描后，从所选来源的本机日志/数据库提取用量；不读取认证文件，不保存或上传聊天正文。"
             .into(),
         directory_change_policy: "preserve-dataset".into(),
     }
@@ -185,6 +203,17 @@ fn validate_directory(path: &Path) -> Result<String, CoreError> {
         return Err(CoreError::InvalidQuery);
     }
     Ok(value.into())
+}
+fn validate_directory_for(provider: &str, path: &Path) -> Result<String, CoreError> {
+    let kind = match provider {
+        "ccusage.codex" => usage_adapters::AgentKind::Codex,
+        "ccusage.antigravity" => usage_adapters::AgentKind::Antigravity,
+        _ => return validate_directory(path),
+    };
+    usage_adapters::validate_agent_directory(kind, path)?
+        .to_str()
+        .map(str::to_owned)
+        .ok_or(CoreError::InvalidQuery)
 }
 fn io_error(error: std::io::Error) -> CoreError {
     if error.kind() == std::io::ErrorKind::PermissionDenied {

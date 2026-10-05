@@ -278,7 +278,7 @@ impl Runtime {
         self.settings
             .as_ref()
             .ok_or_else(|| mapping::error(CoreError::UnsupportedFilter))?
-            .remember_directory(path)
+            .remember_directory_for(provider_id, path)
             .await
     }
     /// Caller prevents window close until children have observed cancellation and completed.

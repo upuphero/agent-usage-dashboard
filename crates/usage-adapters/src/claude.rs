@@ -224,6 +224,7 @@ struct RawRow {
     cache_creation_tokens: Option<u64>,
     cache_read_tokens: Option<u64>,
     total_tokens: Option<u64>,
+    reasoning_output_tokens: Option<u64>,
     total_cost: Option<serde_json::Number>,
     #[serde(default)]
     models_used: Vec<String>,
@@ -239,6 +240,8 @@ struct RawModel {
     cache_creation_tokens: Option<u64>,
     cache_read_tokens: Option<u64>,
     cost: Option<serde_json::Number>,
+    reasoning_output_tokens: Option<u64>,
+    total_tokens: Option<u64>,
     #[serde(default)]
     missing_pricing: bool,
 }
@@ -364,7 +367,7 @@ pub(crate) fn decode_report(
             output_total: metric(raw.output_tokens),
             cache_write: metric(raw.cache_creation_tokens),
             cache_read: metric(raw.cache_read_tokens),
-            output_reasoning: Metric::unavailable(),
+            output_reasoning: metric(raw.reasoning_output_tokens),
             total: metric(raw.total_tokens),
         };
         parent_total = parent_total
@@ -400,8 +403,8 @@ pub(crate) fn decode_report(
                     output_total: metric(model.output_tokens),
                     cache_write: metric(model.cache_creation_tokens),
                     cache_read: metric(model.cache_read_tokens),
-                    output_reasoning: Metric::unavailable(),
-                    total: Metric::unavailable(),
+                    output_reasoning: metric(model.reasoning_output_tokens),
+                    total: metric(model.total_tokens),
                 },
                 cost: cost(
                     model.cost.as_ref(),

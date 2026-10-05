@@ -117,3 +117,13 @@ macOS 打包增量影响（实施前记录）：已核对锁定 Tauri CLI v2.8.4
 Windows NSIS 4146040 bytes（3.95 MiB）；Mac ARM64 DMG 5167856 bytes（4.93 MiB）。两平台集中 artifact 已生成，含相对路径 SHA256SUMS、size-report、bundle-manifest、build-info 和 ccusage notices；保留一天，本地下载后再次实际校验两安装器 hash。完整尺寸、hash、image、签名与验证边界见 ../ci-validation/2026-10-04.md。安装器二进制只在忽略的 artifacts 目录，不提交。
 
 接口基线已就绪，API 1.1.0 / 各端口不变；前端、数据已完成交付并集成。纯文档最终状态更新不触发重复完整编译。仍待真实 UI/IPC、最低 OS/干净机器/升级、完整 transitive notices、正式签名和用户日志验收。本机 MSVC/SDK 仍按用户要求不安装，远程成功不冒充本机编译成功。v0.0.1 旧 source-preview tag/Release 不变；不自动发布二进制或配置凭据。
+
+## Codex / Antigravity 与 Windows 免安装增量（实施前影响）
+
+用户在 Windows 当前只使用 Codex 和 Antigravity，要求先统计两者；此前只接入 Claude Code 导致无数据。两份原任务交付已完成，主 agent 负责此次必要跨层集成，不启动 agent，也不改原始 data.md/frontend.md。
+
+保留 Core/SQLite/Tauri/锁定 ccusage 架构及 API 1.1.0 端口/DTO。新增 ccusage.codex / ccusage.antigravity 产品级 Adapter；固定 source 专属 CLI 参数和环境，保留原 Claude runner 入口。Codex report inputTokens 已排除 cache，reasoning 是 output 子集；Antigravity report outputTokens 是可见输出，totalTokens 包含推理，需在 Adapter 恢复完整 output，并保守处理未提供的模型推理拆分。前端不重算这些口径。
+
+Settings/profile 扩展为多个 Provider，目录引用绑定 provider，迁移保持已有 device/Claude dataset 身份，为新增来源创建并持久化独立 dataset；不默认扫描。首次使用提供明确“启用并扫描”入口、来源不可读诊断、近期范围。只读提取本机用量，不读认证文件，不把聊天正文/源数据库提交或上传；fixtures 全部合成。
+
+Windows 增加免安装 ZIP：主 exe、锁定 ccusage.exe、必要 resources/notices 同目录；CI 验证解压包架构/hash/fixture/native tests。数据仍保存在应用用户目录，便于免安装与安装版共享身份/历史；ZIP 不承诺完全不依赖系统 WebView2。两平台正式签名/最低系统/真实 UI 仍按实际证据报告，不扩大 Core 耦合。此迭代使用应用 0.0.2 区别于旧 v0.0.1 测试包，不修改旧 tag/Release。

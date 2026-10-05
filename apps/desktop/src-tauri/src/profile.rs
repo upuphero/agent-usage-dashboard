@@ -2,11 +2,36 @@
 //! This file is not an API DTO or a database row. Source configuration changes never create a new identity implicitly.
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Write,
     path::Path,
 };
 use usage_core::CoreError;
+
+pub const PROVIDERS: [&str; 3] = [
+    "ccusage.claude-code",
+    "ccusage.codex",
+    "ccusage.antigravity",
+];
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderProfile {
+    pub dataset_id: String,
+    pub enabled: bool,
+    pub root_path: Option<String>,
+    pub directory_ref: Option<String>,
+}
+impl ProviderProfile {
+    fn fresh() -> Self {
+        Self {
+            dataset_id: uuid::Uuid::new_v4().to_string(),
+            enabled: false,
+            root_path: None,
+            directory_ref: None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -21,6 +46,8 @@ pub struct DesktopProfile {
     pub settings_revision: u64,
     #[serde(default)]
     pub claude_directory_ref: Option<String>,
+    #[serde(default)]
+    pub additional_providers: BTreeMap<String, ProviderProfile>,
 }
 fn initial_revision() -> u64 {
     1
@@ -28,7 +55,7 @@ fn initial_revision() -> u64 {
 impl DesktopProfile {
     fn fresh() -> Self {
         Self {
-            profile_version: 1,
+            profile_version: 2,
             device_id: uuid::Uuid::new_v4().to_string(),
             claude_dataset_id: uuid::Uuid::new_v4().to_string(),
             claude_enabled: false,
@@ -36,13 +63,17 @@ impl DesktopProfile {
             timezone: "UTC".into(),
             settings_revision: 1,
             claude_directory_ref: None,
+            additional_providers: PROVIDERS[1..]
+                .iter()
+                .map(|id| ((*id).into(), ProviderProfile::fresh()))
+                .collect(),
         }
     }
     fn validate(&self) -> Result<(), CoreError> {
-        if self.profile_version > 1 {
+        if self.profile_version > 2 {
             return Err(CoreError::StorageSchemaNewer);
         }
-        if self.profile_version != 1 || self.settings_revision == 0 {
+        if !matches!(self.profile_version, 1 | 2) || self.settings_revision == 0 {
             return Err(CoreError::InvalidData);
         }
         for id in [&self.device_id, &self.claude_dataset_id] {
@@ -54,6 +85,32 @@ impl DesktopProfile {
             }
         }
         usage_core::application::validate_timezone(&self.timezone)?;
+        if self.profile_version == 2
+            && (self.additional_providers.len() != 2
+                || !PROVIDERS[1..]
+                    .iter()
+                    .all(|id| self.additional_providers.contains_key(*id)))
+        {
+            return Err(CoreError::InvalidData);
+        }
+        for (id, provider) in &self.additional_providers {
+            if !PROVIDERS[1..].contains(&id.as_str())
+                || uuid::Uuid::parse_str(&provider.dataset_id)
+                    .map_err(|_| CoreError::InvalidData)?
+                    .to_string()
+                    != provider.dataset_id
+            {
+                return Err(CoreError::InvalidData);
+            }
+            if provider.root_path.is_none() && provider.directory_ref.is_some() {
+                return Err(CoreError::InvalidData);
+            }
+            if provider.root_path.as_ref().is_some_and(|path| {
+                !Path::new(path).is_absolute() || path.trim() != path || path.contains(',')
+            }) {
+                return Err(CoreError::InvalidQuery);
+            }
+        }
         if self.claude_root_path.is_none() && self.claude_directory_ref.is_some() {
             return Err(CoreError::InvalidData);
         }
@@ -78,7 +135,20 @@ impl DesktopProfile {
         fs::create_dir_all(directory).map_err(|_| CoreError::Storage)?;
         let path = directory.join("profile.json");
         match fs::metadata(&path) {
-            Ok(_) => return Self::read(&path),
+            Ok(_) => {
+                let mut profile = Self::read(&path)?;
+                if profile.profile_version == 1 {
+                    profile.profile_version = 2;
+                    for id in &PROVIDERS[1..] {
+                        profile
+                            .additional_providers
+                            .entry((*id).into())
+                            .or_insert_with(ProviderProfile::fresh);
+                    }
+                    profile.persist(directory)?;
+                }
+                return Ok(profile);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
             Err(_) => return Err(CoreError::Storage),
         }
@@ -137,6 +207,48 @@ impl DesktopProfile {
         })();
         let _ = fs::remove_file(staging);
         result
+    }
+    pub fn provider(&self, id: &str) -> Result<ProviderProfile, CoreError> {
+        if id == PROVIDERS[0] {
+            return Ok(ProviderProfile {
+                dataset_id: self.claude_dataset_id.clone(),
+                enabled: self.claude_enabled,
+                root_path: self.claude_root_path.clone(),
+                directory_ref: self.claude_directory_ref.clone(),
+            });
+        }
+        self.additional_providers
+            .get(id)
+            .cloned()
+            .ok_or(CoreError::ProviderNotFound)
+    }
+    pub fn set_provider(&mut self, id: &str, value: ProviderProfile) -> Result<(), CoreError> {
+        if id == PROVIDERS[0] {
+            self.claude_enabled = value.enabled;
+            self.claude_root_path = value.root_path;
+            self.claude_directory_ref = value.directory_ref;
+        } else if let Some(provider) = self.additional_providers.get_mut(id) {
+            *provider = value;
+        } else {
+            return Err(CoreError::ProviderNotFound);
+        }
+        Ok(())
+    }
+    pub fn configs(&self) -> BTreeMap<String, usage_core::SourceConfig> {
+        PROVIDERS
+            .into_iter()
+            .filter_map(|id| {
+                self.provider(id).ok().map(|provider| {
+                    (
+                        id.into(),
+                        usage_core::SourceConfig {
+                            enabled: provider.enabled,
+                            root_path: provider.root_path,
+                        },
+                    )
+                })
+            })
+            .collect()
     }
 }
 #[cfg(windows)]
@@ -199,7 +311,7 @@ mod tests {
     fn newer_or_corrupt_profiles_are_never_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let mut profile = DesktopProfile::load_or_create(dir.path()).unwrap();
-        profile.profile_version = 2;
+        profile.profile_version = 3;
         let bytes = serde_json::to_vec(&profile).unwrap();
         fs::write(dir.path().join("profile.json"), &bytes).unwrap();
         assert!(matches!(
@@ -229,5 +341,29 @@ mod tests {
         assert_eq!(read.settings_revision, 1);
         assert_eq!(read.device_id, original.device_id);
         assert_eq!(read.claude_dataset_id, original.claude_dataset_id);
+    }
+    #[test]
+    fn version_one_migration_creates_stable_separate_provider_datasets() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut old = DesktopProfile::fresh();
+        old.profile_version = 1;
+        old.additional_providers.clear();
+        fs::write(
+            dir.path().join("profile.json"),
+            serde_json::to_vec(&old).unwrap(),
+        )
+        .unwrap();
+        let migrated = DesktopProfile::load_or_create(dir.path()).unwrap();
+        let reopened = DesktopProfile::load_or_create(dir.path()).unwrap();
+        assert_eq!(migrated.device_id, old.device_id);
+        assert_eq!(migrated.claude_dataset_id, old.claude_dataset_id);
+        assert_eq!(
+            migrated.provider("ccusage.codex").unwrap().dataset_id,
+            reopened.provider("ccusage.codex").unwrap().dataset_id
+        );
+        assert_ne!(
+            migrated.provider("ccusage.codex").unwrap().dataset_id,
+            migrated.provider("ccusage.antigravity").unwrap().dataset_id
+        );
     }
 }

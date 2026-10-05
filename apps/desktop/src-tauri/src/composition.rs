@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use usage_adapters::{ClaudeCodeAdapter, ProcessRunner, SqliteRepository};
+use usage_adapters::{AgentAdapter, AgentKind, ClaudeCodeAdapter, ProcessRunner, SqliteRepository};
 use usage_core::{Clock, CoreError, SourceConfig, UsageService};
 pub struct SystemClock;
 type Composition = (
@@ -26,24 +26,30 @@ fn assemble(app_data_dir: &Path, executable: &Path) -> Result<Composition, CoreE
     let settings = Arc::new(SettingsStore::new(app_data_dir, profile.clone()));
     let repository = Arc::new(SqliteRepository::open(app_data_dir.join("usage.db"))?);
     let runner = ProcessRunner::new(executable, Default::default())?;
+    let codex = Arc::new(AgentAdapter::new(
+        AgentKind::Codex,
+        runner.clone(),
+        profile.provider("ccusage.codex")?.dataset_id,
+        profile.device_id.clone(),
+    )?);
+    let antigravity = Arc::new(AgentAdapter::new(
+        AgentKind::Antigravity,
+        runner.clone(),
+        profile.provider("ccusage.antigravity")?.dataset_id,
+        profile.device_id.clone(),
+    )?);
+    let configs = profile.configs();
     let source = Arc::new(ClaudeCodeAdapter::new(
         runner,
         profile.claude_dataset_id,
         profile.device_id,
         None,
     )?);
-    let configs = BTreeMap::from([(
-        "ccusage.claude-code".into(),
-        SourceConfig {
-            enabled: profile.claude_enabled,
-            root_path: profile.claude_root_path,
-        },
-    )]);
     Ok((
         Arc::new(UsageService::new(
             repository,
             Arc::new(SystemClock),
-            vec![source],
+            vec![codex, antigravity, source],
         )),
         configs,
         settings,

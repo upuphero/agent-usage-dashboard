@@ -62,10 +62,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/smoke-windows.ps1
+      - name: Create, extract and verify Windows portable ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/create-windows-portable.ps1
       - name: Mount ARM64 DMG, copy app and verify installed binaries
         if: runner.os == 'macOS'
         run: bash scripts/smoke-macos.sh
-      - name: Test the installed sidecar through native adapters and host
+      - name: Test the installed or portable sidecar through native adapters and host
         run: cargo test -p usage-adapters -p usage-desktop --release --features usage-desktop/custom-protocol --locked --target ${{ matrix.target }} -- --ignored
       - name: Native host lint
         run: cargo clippy -p usage-desktop --release --features custom-protocol --all-targets --locked --target ${{ matrix.target }} -- -D warnings

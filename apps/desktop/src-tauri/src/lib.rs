@@ -1,5 +1,6 @@
 mod commands;
 mod composition;
+mod diagnostics;
 mod export;
 mod mapping;
 mod profile;
@@ -7,6 +8,9 @@ mod runtime;
 mod settings;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+pub fn diagnose_usage(output: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    diagnostics::run(output)
+}
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {

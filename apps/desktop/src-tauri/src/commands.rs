@@ -134,11 +134,13 @@ pub async fn choose_provider_directory(
     if !state.settings_available() {
         return Err(mapping::error(usage_core::CoreError::UnsupportedFilter));
     }
+    let title = match request.provider_id.as_str() {
+        "ccusage.codex" => "选择 Codex 数据目录（.codex 或 sessions）",
+        "ccusage.antigravity" => "选择 Antigravity 数据目录或 conversations",
+        _ => "选择 Claude 配置目录或 projects 目录",
+    };
     let picked = tokio::task::spawn_blocking(move || {
-        app.dialog()
-            .file()
-            .set_title("选择 Claude 配置目录或 projects 目录")
-            .blocking_pick_folder()
+        app.dialog().file().set_title(title).blocking_pick_folder()
     })
     .await
     .map_err(|_| mapping::error(usage_core::CoreError::Storage))?;

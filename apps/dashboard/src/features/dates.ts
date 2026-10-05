@@ -1,6 +1,6 @@
 import type { DateRange } from '../api/generated/usage';
 
-export type DatePreset = 'today' | 'week' | 'month';
+export type DatePreset = 'today' | 'week' | 'month' | 'last30';
 const iso = (date: Date) => date.toISOString().slice(0, 10);
 export function todayInTimezone(timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -12,6 +12,7 @@ export function rangeForPreset(today: string, preset: DatePreset): DateRange {
   if (preset === 'month') return { start: `${today.slice(0, 7)}-01`, end: iso(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1))) };
   const tomorrow = new Date(date); tomorrow.setUTCDate(date.getUTCDate() + 1);
   if (preset === 'week') date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  if (preset === 'last30') date.setUTCDate(date.getUTCDate() - 29);
   return { start: iso(date), end: iso(tomorrow) };
 }
 export function displayRange(range: DateRange): string {

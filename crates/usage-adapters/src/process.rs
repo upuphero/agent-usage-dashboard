@@ -19,6 +19,32 @@ use usage_core::{CancellationToken, CoreError, ReportKind};
 pub const COLLECTOR_VERSION: &str = "ccusage-20.0.26";
 pub const NORMALIZATION_VERSION: &str = "claude-code-1";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentKind {
+    Codex,
+    Antigravity,
+}
+impl AgentKind {
+    pub fn product(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Antigravity => "antigravity",
+        }
+    }
+    pub fn provider(self) -> &'static str {
+        match self {
+            Self::Codex => "ccusage.codex",
+            Self::Antigravity => "ccusage.antigravity",
+        }
+    }
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Antigravity => "Antigravity",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RunnerLimits {
     pub timeout: Duration,
@@ -61,6 +87,30 @@ impl ProcessRunner {
         timezone: &str,
         cancellation: CancellationToken,
     ) -> Result<Vec<u8>, CoreError> {
+        self.run_controlled(None, kind, &[root.to_path_buf()], timezone, cancellation)
+            .await
+    }
+
+    pub async fn run_agent_report(
+        &self,
+        agent: AgentKind,
+        kind: ReportKind,
+        roots: &[PathBuf],
+        timezone: &str,
+        cancellation: CancellationToken,
+    ) -> Result<Vec<u8>, CoreError> {
+        self.run_controlled(Some(agent), kind, roots, timezone, cancellation)
+            .await
+    }
+
+    async fn run_controlled(
+        &self,
+        agent: Option<AgentKind>,
+        kind: ReportKind,
+        roots: &[PathBuf],
+        timezone: &str,
+        cancellation: CancellationToken,
+    ) -> Result<Vec<u8>, CoreError> {
         timezone
             .parse::<Tz>()
             .map_err(|_| CoreError::InvalidQuery)?;
@@ -70,39 +120,54 @@ impl ProcessRunner {
         tokio::task::spawn_blocking(move || verify_executable(&executable))
             .await
             .map_err(|_| CoreError::CollectionFailed)??;
-        let root = root.canonicalize().map_err(io_error)?;
-        if root
-            .to_str()
-            .is_none_or(|s| s.contains(',') || s.contains('\0'))
-        {
+        if roots.is_empty() || roots.len() > 5 {
             return Err(CoreError::InvalidQuery);
         }
+        let roots = roots
+            .iter()
+            .map(|root| {
+                let root = root.canonicalize().map_err(io_error)?;
+                let text = root
+                    .to_str()
+                    .filter(|s| !s.contains(',') && !s.contains('\0'))
+                    .ok_or(CoreError::InvalidQuery)?
+                    .to_owned();
+                Ok(text)
+            })
+            .collect::<Result<Vec<_>, CoreError>>()?;
         let sandbox = tempfile::tempdir().map_err(io_error)?;
         let config = sandbox.path().join("ccusage.json");
         std::fs::write(&config, b"{}").map_err(io_error)?;
         let mut command = Command::new(&self.executable);
+        command.args([
+            agent.map_or("claude", AgentKind::product),
+            match kind {
+                ReportKind::Daily => "daily",
+                ReportKind::Session => "session",
+            },
+            "--json",
+            "--offline",
+            "--timezone",
+            timezone,
+        ]);
+        if agent.is_none() {
+            command.args(["--breakdown", "--mode", "calculate", "--order", "asc"]);
+        }
+        if agent == Some(AgentKind::Codex) {
+            // Only sanitized snapshots are passed here. No user config/auth files are discovered.
+            command.args(["--speed", "auto"]);
+        }
+        let source_environment = match agent {
+            None => "CLAUDE_CONFIG_DIR",
+            Some(AgentKind::Codex) => "CODEX_HOME",
+            Some(AgentKind::Antigravity) => "ANTIGRAVITY_DATA_DIR",
+        };
         command
-            .args([
-                "claude",
-                match kind {
-                    ReportKind::Daily => "daily",
-                    ReportKind::Session => "session",
-                },
-                "--json",
-                "--offline",
-                "--breakdown",
-                "--mode",
-                "calculate",
-                "--order",
-                "asc",
-                "--timezone",
-                timezone,
-                "--config",
-            ])
+            .arg("--config")
             .arg(&config)
             .current_dir(sandbox.path())
             .env_clear()
-            .env("CLAUDE_CONFIG_DIR", &root)
+            .env(source_environment, roots.join(","))
             .env("HOME", sandbox.path())
             .env("USERPROFILE", sandbox.path())
             .env("XDG_CONFIG_HOME", sandbox.path())

@@ -15,7 +15,8 @@ export function verifyMainArchitecture(bytes, target) {
   } else throw new Error('Unsupported bundle target');
 }
 export async function verifyBundle({ target, root, kind = 'staging', output }) {
-  if (!['staging', 'installed', 'app-bundle'].includes(kind)) throw new Error('Unsupported verification kind');
+  if (!['staging', 'installed', 'app-bundle', 'portable'].includes(kind)) throw new Error('Unsupported verification kind');
+  if (kind === 'portable' && target !== 'x86_64-pc-windows-msvc') throw new Error('Portable ZIP is Windows x64 only');
   const { entry, lock } = await readLock(target);
   const config = JSON.parse(await readFile(join(projectRoot, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'));
   const directory = resolve(root);

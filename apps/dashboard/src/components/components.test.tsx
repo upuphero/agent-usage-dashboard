@@ -55,6 +55,10 @@ describe('presentation accuracy and capabilities', () => {
     expect(html).toMatch(/<button[^>]*disabled=""/);
     expect(html).toContain('额度不可用');
     expect(html).toContain('完整快照');
+    const firstUse = renderToStaticMarkup(<Providers providers={[{ ...PROVIDERS[0], enabled: false, lastSuccessAt: null }]} timezone="UTC" canScan busy={false} onScan={() => undefined} onEnableAndScan={() => undefined} />);
+    expect(firstUse).toContain('来源尚未启用');
+    expect(firstUse).toContain('启用并扫描');
+    expect(firstUse).not.toMatch(/<button[^>]*disabled=""/);
   });
   it('states lifetime session semantics, disables period usage and never invents start dates', async () => {
     const result = await new MockUsageClient('partial', 0).listSessions({ timezone: DEMO_TIMEZONE, providerIds: [], modelIds: [], activeRange: null, offset: 0, limit: 20 });
