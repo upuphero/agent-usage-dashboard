@@ -38,8 +38,7 @@ async fn codex_and_antigravity_use_native_reports_replace_snapshots_and_preserve
         PathBuf::from(std::env::var_os("CCUSAGE_TEST_BINARY").expect("prepare native sidecar"));
     for kind in [AgentKind::Codex, AgentKind::Antigravity] {
         let directory = tempfile::tempdir().unwrap();
-        let expected;
-        if kind == AgentKind::Codex {
+        let expected = if kind == AgentKind::Codex {
             std::fs::create_dir(directory.path().join("sessions")).unwrap();
             std::fs::write(directory.path().join("sessions/sample.jsonl"), concat!(
                 "{\"type\":\"session_meta\",\"timestamp\":\"2026-10-04T12:00:00Z\",\"payload\":{\"id\":\"fixture-session\"}}\n",
@@ -47,7 +46,7 @@ async fn codex_and_antigravity_use_native_reports_replace_snapshots_and_preserve
                 "{\"type\":\"event_msg\",\"timestamp\":\"2026-10-04T12:00:01Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":30,\"reasoning_output_tokens\":10,\"total_tokens\":130}}}}\n",
                 "{\"type\":\"event_msg\",\"timestamp\":\"2026-10-04T12:01:01Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":180,\"cached_input_tokens\":30,\"output_tokens\":60,\"reasoning_output_tokens\":20,\"total_tokens\":240}}}}\n"
             )).unwrap();
-            expected = 240;
+            240
         } else {
             std::fs::create_dir(directory.path().join("conversations")).unwrap();
             let db = Connection::open(directory.path().join("conversations/session.db")).unwrap();
@@ -72,8 +71,8 @@ async fn codex_and_antigravity_use_native_reports_replace_snapshots_and_preserve
             .concat();
             db.execute("INSERT INTO gen_metadata VALUES(1,?1)", [bytes(1, &chat)])
                 .unwrap();
-            expected = 210;
-        }
+            210
+        };
         let repository = Arc::new(SqliteRepository::in_memory().unwrap());
         let adapter = Arc::new(
             AgentAdapter::new(
