@@ -2,6 +2,7 @@ import type { OverviewResult, ProviderSummary, UsageGroup } from '../api/generat
 import { barPercent, formatTime, largestMetric } from '../components/format';
 import { CoverageDetails, EmptyState, MetricCard, MetricValue, Notice, Panel, QualityBadge } from '../components/ui';
 import { TrendChart } from './TrendChart';
+import { ModelDistribution } from './ModelDistribution';
 
 const warningLabels: Record<string, string> = {
   MODEL_BREAKDOWN_UNAVAILABLE: '部分来源缺少模型明细，模型分布不能代表全部用量。',
@@ -33,7 +34,7 @@ export function Overview({ result, providers, timezone }: { result: OverviewResu
     </div>
     <div className="two-columns">
       <Panel title="来源分布" eyebrow="PROVIDERS" action={<span className="pill">{result.byProvider.length} 个来源</span>}><Distribution groups={result.byProvider} label={id => providers.find(provider => provider.providerId === id)?.displayName ?? id} /></Panel>
-      <Panel title="模型分布" eyebrow="MODELS" action={<span className="pill">已提供的明细</span>}><Distribution groups={result.byModel} label={id => id} /><p className="panel-footnote">模型明细与总计是同一用量的不同视图，不重复相加。</p></Panel>
+      <ModelDistribution groups={result.byModel} />
     </div>
     <WarningList warnings={result.warnings} />
     <Panel title="字段精度与统计覆盖" eyebrow="DATA QUALITY">

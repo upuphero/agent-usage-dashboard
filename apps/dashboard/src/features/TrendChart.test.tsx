@@ -27,6 +27,8 @@ describe('chart readability and exact token presentation', () => {
     expect(geometry.maximum).toBe('18446744073709551615');
     expect(geometry.points[0].y).toBe(240); expect(geometry.points[1].y).toBe(0); expect(geometry.points[2].y).toBeNull();
     expect(geometry.segments.map(segment => segment.length)).toEqual([2, 1, 1]);
+    const knownZero = chartGeometry([point('2026-01-01','10'),point('2026-01-02','0'),point('2026-01-03','20')],'day');
+    expect(knownZero.segments).toHaveLength(1);expect(knownZero.points[1].y).toBe(240);
   });
   it('puts the chart first and leaves full point values in accessible hover targets, not a crowded row', async () => {
     const result = await new MockUsageClient('partial', 0).getOverview({ range: DEMO_RANGE, timezone: DEMO_TIMEZONE, providerIds: [], modelIds: [], bucket: 'day' });

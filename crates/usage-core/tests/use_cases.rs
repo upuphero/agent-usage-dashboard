@@ -452,6 +452,108 @@ async fn complete_success_empty_is_zero_but_unsupported_metrics_stay_unavailable
     assert_eq!(overview.aggregate.tokens.total.metric.value, Some(0));
     assert_eq!(overview.aggregate.tokens.cache_read.metric.value, None);
     assert!(!overview.coverage.is_empty());
+    assert_eq!(overview.buckets.len(), 4);
+    assert!(overview
+        .buckets
+        .values()
+        .all(|bucket| bucket.tokens.total.metric.value == Some(0)));
+}
+
+#[tokio::test]
+async fn complete_daily_timeline_fills_no_usage_days_and_keeps_explicit_unknown() {
+    let (service, _, _) = setup(CollectionBatch {
+        snapshots: vec![snapshot(
+            ReportKind::Daily,
+            vec![
+                row("2026-10-01", None, Some(10)),
+                row("2026-10-03", None, None),
+                row("2026-10-04", None, Some(20)),
+            ],
+        )],
+    });
+    scan(&service, "timeline", CancellationToken::default()).await;
+    let overview = service.get_overview(query()).await.unwrap();
+    assert_eq!(overview.buckets.len(), 4);
+    assert_eq!(
+        overview.buckets[&date("2026-10-02")]
+            .tokens
+            .total
+            .metric
+            .value,
+        Some(0)
+    );
+    assert_eq!(
+        overview.buckets[&date("2026-10-03")]
+            .tokens
+            .total
+            .metric
+            .value,
+        None
+    );
+    assert_eq!(overview.aggregate.tokens.total.metric.value, Some(30));
+    assert_eq!(overview.aggregate.tokens.total.known_rows, 2);
+    assert_eq!(overview.aggregate.tokens.total.missing_rows, 1);
+}
+
+#[tokio::test]
+async fn empty_cache_is_not_a_zero_timeline_and_week_month_use_zero_buckets() {
+    let (service, _, _) = setup(CollectionBatch {
+        snapshots: vec![snapshot(ReportKind::Daily, vec![])],
+    });
+    assert!(service
+        .get_overview(query())
+        .await
+        .unwrap()
+        .buckets
+        .is_empty());
+    scan(&service, "empty-periods", CancellationToken::default()).await;
+    let mut q = query();
+    q.range = DateRange {
+        start: date("2026-09-28"),
+        end: date("2026-10-12"),
+    };
+    q.bucket = Bucket::Week;
+    let weeks = service.get_overview(q.clone()).await.unwrap();
+    assert_eq!(weeks.buckets.len(), 2);
+    assert_eq!(
+        weeks.buckets[&date("2026-10-05")].tokens.total.metric.value,
+        Some(0)
+    );
+    q.bucket = Bucket::Month;
+    let months = service.get_overview(q).await.unwrap();
+    assert_eq!(months.buckets.len(), 2);
+    assert_eq!(
+        months.buckets[&date("2026-10-01")]
+            .tokens
+            .total
+            .metric
+            .value,
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn zero_timeline_respects_declared_coverage_boundaries() {
+    let mut bounded = snapshot(ReportKind::Daily, vec![row("2026-10-01", None, Some(5))]);
+    bounded.coverage.range = Some(DateRange {
+        start: date("2026-10-01"),
+        end: date("2026-10-03"),
+    });
+    let (service, _, _) = setup(CollectionBatch {
+        snapshots: vec![bounded],
+    });
+    scan(&service, "bounded-timeline", CancellationToken::default()).await;
+    let result = service.get_overview(query()).await.unwrap();
+    assert_eq!(result.buckets.len(), 2);
+    assert_eq!(
+        result.buckets[&date("2026-10-02")]
+            .tokens
+            .total
+            .metric
+            .value,
+        Some(0)
+    );
+    assert!(!result.buckets.contains_key(&date("2026-10-03")));
 }
 
 #[tokio::test]

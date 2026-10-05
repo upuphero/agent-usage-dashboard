@@ -141,3 +141,9 @@ profile v1 → v2 原子迁移已加测试：保留既有 device/Claude dataset�
 曲线默认、保留柱状切换，完整数值tooltip支持鼠标/键盘/触摸，轴标签稀疏显示。筛选按钮默认折叠、显示当前查询摘要，保留原有查询参数与能力限制，支持Escape/外部点击关闭。中文量级只在中文UI显示，精确值始终保留。前端任务已交付，主agent做用户指定的目标修改，不启动agent、不改原始frontend.md/data.md。应用增量为0.0.3；继续免费标准runner输出Windows免安装/NSIS和ARM64 DMG。
 
 0.0.3 图形优先 UI 已完成：实际浏览器验证30个大数值点、完整数值提示与方向键、曲线/柱状切换、紧凑筛选/外部关闭/Escape/能力联动、中文量级；1180和800桌面窗口无横向溢出、console无warn/error。41前端tests通过；新图形不改变API1.1.0或统计值。免费 run37261635910 / 3e6cb88b2e75fe2e99aff07c5debd0ce3fa65066 五jobs全通过，各平台native/安装或解压/lint/原始sidecar门槛保持通过。Windows ZIP5778704 bytes/NSIS4203562 bytes/Mac DMG5244795 bytes已下载重新核对hash；证据见../ci-validation/0.0.3-chart-readability.md。截图/合成压力预览仅本地忽略目录，未上传，也不把浏览器Mock验收当真实Tauri点击验收。数据/历史/profile2保持不变，不改旧tag或发布凭据。
+
+## 0.0.4 零用量日期与模型排序（实施前记录）
+
+用户指出无使用日期应为0、曲线不能因API省略日期而断开；0.0.3把省略桶与未知字段一同断开是主agent的问题。本次由Core补齐查询周期中完整标准Daily覆盖证明没有记录的桶，值为derived zero；未采集、明确null或不完整覆盖仍不伪造零。UI只画API的完整时间序列，不自己补业务数字，保证统计总计不因补展示桶而增加。
+
+模型分布提供token和API估算成本两种精确降序排序；已知零用量折叠在底部。截图中null token但有成本/细分用量的模型并非未使用，按当前排序字段不足单独放末尾折叠，避免伪装零。费用按API已有金额排序，不新建价格规则；BigInt/定点字符串比较保留精度。API1.1.0和端口不变，应用0.0.4。两方已完成交付，主agent做必要修正，不启动新agent、不改原始frontend.md/data.md。

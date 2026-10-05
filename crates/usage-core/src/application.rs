@@ -195,6 +195,9 @@ impl UsageService {
 
     pub async fn get_overview(&self, query: OverviewQuery) -> Result<Overview, CoreError> {
         query.range.validate()?;
+        if (query.range.end - query.range.start).num_days() > 10_000 {
+            return Err(CoreError::InvalidQuery);
+        }
         validate_timezone(&query.timezone)?;
         self.validate_providers(&query.provider_ids)?;
         let snapshots = self
@@ -216,6 +219,7 @@ impl UsageService {
             last_success_at: None,
         };
         let mut seen = BTreeSet::new();
+        let mut zero_coverage = Vec::new();
         for snapshot in snapshots.into_iter().filter(|s| {
             s.key.scope == QueryScope::Standard && selected(&query.provider_ids, &s.provider_id)
         }) {
@@ -226,6 +230,12 @@ impl UsageService {
                 || snapshot.coverage.state != CoverageState::Complete;
             result.last_success_at = result.last_success_at.max(Some(snapshot.collected_at));
             result.coverage.push(snapshot.coverage.clone());
+            zero_coverage.push((
+                snapshot.coverage.clone(),
+                self.source(&snapshot.provider_id)?
+                    .descriptor()
+                    .capabilities,
+            ));
             result.warnings.extend(snapshot.warnings.clone());
             let mut days: BTreeMap<NaiveDate, Vec<&ReportRow>> = BTreeMap::new();
             for row in &snapshot.rows {
@@ -308,6 +318,42 @@ impl UsageService {
                         row,
                     )?;
                 }
+            }
+        }
+        // A missing bucket in complete local Daily coverage proves no usage.
+        // Explicitly unavailable rows and an uncollected cache never become zero.
+        if !zero_coverage.is_empty() {
+            let mut date = query.range.start;
+            while date < query.range.end {
+                let start = bucket_start(date, query.bucket)?;
+                let end = match query.bucket {
+                    Bucket::Day => start.succ_opt(),
+                    Bucket::Week => start.checked_add_signed(Duration::days(7)),
+                    Bucket::Month => {
+                        if start.month() == 12 {
+                            NaiveDate::from_ymd_opt(start.year() + 1, 1, 1)
+                        } else {
+                            NaiveDate::from_ymd_opt(start.year(), start.month() + 1, 1)
+                        }
+                    }
+                }
+                .ok_or(CoreError::InvalidQuery)?;
+                let covered_start = start.max(query.range.start);
+                let covered_end = end.min(query.range.end);
+                let proves_empty = zero_coverage.iter().all(|(coverage, _)| {
+                    coverage.state == CoverageState::Complete
+                        && coverage.range.as_ref().is_none_or(|range| {
+                            range.start <= covered_start && range.end >= covered_end
+                        })
+                });
+                if !result.buckets.contains_key(&start) && proves_empty {
+                    let mut empty = Aggregate::default();
+                    for (_, capabilities) in &zero_coverage {
+                        add_empty_coverage(&mut empty, capabilities);
+                    }
+                    result.buckets.insert(start, empty);
+                }
+                date = end;
             }
         }
         // Empty cache is unavailable; complete authoritative snapshots can prove zero usage.
@@ -750,7 +796,7 @@ fn add_metric<T: Copy>(
 
 fn add_empty_coverage(aggregate: &mut Aggregate, capabilities: &ProviderCapabilities) {
     fn zero<T>(target: &mut AggregateMetric<T>, value: T) {
-        if target.metric.value.is_none() {
+        if target.metric.value.is_none() && target.missing_rows == 0 {
             target.metric = Metric {
                 value: Some(value),
                 accuracy: Accuracy::Derived,

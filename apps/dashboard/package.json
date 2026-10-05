@@ -1,5 +1,5 @@
 {
-  "name": "@usage/dashboard", "version": "0.0.3", "private": true, "type": "module",
+  "name": "@usage/dashboard", "version": "0.0.4", "private": true, "type": "module",
   "scripts": { "dev": "vite --host 127.0.0.1 --port 1420 --strictPort", "build": "tsc --noEmit && vite build", "typecheck": "tsc --noEmit", "lint": "eslint .", "test": "vitest run" },
   "dependencies": { "@tanstack/react-query": "5.90.2", "@tauri-apps/api": "2.8.0", "react": "19.1.1", "react-dom": "19.1.1" },
   "devDependencies": { "@eslint/js": "9.36.0", "@types/react": "19.1.16", "@types/react-dom": "19.1.9", "@vitejs/plugin-react": "5.0.4", "eslint": "9.36.0", "typescript": "5.9.3", "typescript-eslint": "8.45.0", "vite": "7.1.7", "vitest": "3.2.4" }

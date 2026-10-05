@@ -65,7 +65,7 @@ export function TrendChart({ result }: { result: OverviewResult }) {
           {selected && <div className="chart-tooltip" role="tooltip" id={`${fillId}-tooltip`} style={{ left: `clamp(110px, ${selected.x / WIDTH * 100}%, calc(100% - 110px))` }}><span className="small muted">{selected.start} · {period}</span><strong>{formatTokens(selected.usage.tokens.total.value)} <span className="small muted">token</span></strong>{formatChineseMagnitude(selected.usage.tokens.total.value) && <span className="chart-readable">{formatChineseMagnitude(selected.usage.tokens.total.value)}</span>}<QualityBadge metric={selected.usage.tokens.total} /><span className="chart-tooltip-quality">{qualityDescription(selected.usage.tokens.total)}</span></div>}
         </div>
       </div>
-      <p className="chart-hint">悬停或用方向键查看完整数值 · 未提供的数据留空</p>
+      <p className="chart-hint">悬停或用方向键查看完整数值 · 无使用记录的周期为 0</p>
     </>}
   </Panel>;
 }

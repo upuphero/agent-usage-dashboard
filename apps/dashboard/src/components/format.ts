@@ -62,3 +62,23 @@ export function barPercent(value: string | null, maximum: string | null): number
 export function largestMetric(values: Array<string | null>): string | null {
   return values.reduce<string | null>((max, value) => value !== null && (max === null || BigInt(value) > BigInt(max)) ? value : max, null);
 }
+
+/** Exact, nonnegative decimal ordering for token/cost presentation. Unknown stays last. */
+export function compareDecimalDescending(a: string | null, b: string | null): number {
+  if (a === null) return b === null ? 0 : 1;
+  if (b === null) return -1;
+  const [aWhole, aFraction = ''] = a.split('.');
+  const [bWhole, bFraction = ''] = b.split('.');
+  const aw = BigInt(aWhole); const bw = BigInt(bWhole);
+  if (aw !== bw) return aw > bw ? -1 : 1;
+  const length = Math.max(aFraction.length, bFraction.length);
+  const af = aFraction.padEnd(length, '0'); const bf = bFraction.padEnd(length, '0');
+  return af === bf ? 0 : af > bf ? -1 : 1;
+}
+export function decimalBarPercent(value: string | null, maximum: string | null): number {
+  if (value === null || maximum === null) return 0;
+  const [whole, fraction = ''] = value.split('.'); const [maxWhole, maxFraction = ''] = maximum.split('.');
+  const length = Math.max(fraction.length, maxFraction.length);
+  const count = BigInt(whole + fraction.padEnd(length, '0')); const max = BigInt(maxWhole + maxFraction.padEnd(length, '0'));
+  return max === 0n ? 0 : Math.min(100, Number(count * 1000n / max) / 10);
+}

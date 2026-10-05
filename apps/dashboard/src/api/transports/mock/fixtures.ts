@@ -109,6 +109,6 @@ export const SESSIONS: SessionItem[] = [
   { sessionId: 'demo-session-02', providerId: 'ccusage.codex', productId: 'codex', sourceDatasetId: 'demo-dataset-codex', originDeviceId: 'demo-local-device', modelId: 'demo-codex-model', modelVendor: 'OpenAI', startedAt: '2026-09-28T14:20:00Z', lastActivityAt: '2026-10-03T21:14:00Z', usage: CODEX_USAGE },
 ];
 export const DEMO_API_INFO = {
-  apiVersion: API_VERSION, appVersion: '0.0.3',
+  apiVersion: API_VERSION, appVersion: '0.0.4',
   capabilities: ['overview', 'sessions', 'scan-polling', 'export-json-full-history', 'export-csv', 'demo-data', 'settings-read', 'settings-write', 'source-directory-selection'],
 };
