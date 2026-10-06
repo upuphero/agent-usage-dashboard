@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: &str = "1.1.0";
+pub const API_VERSION: &str = "1.2.0";
 pub const SCAN_EVENT: &str = "usage://scan-updated";
+pub const AUTO_COLLECTION_EVENT: &str = "usage://auto-collection-updated";
 pub const COMMANDS: &[(&str, &str)] = &[
     ("getApiInfo", "get_api_info"),
     ("listProviders", "list_providers"),
@@ -14,6 +15,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("getSettings", "get_settings"),
     ("updateSettings", "update_settings"),
     ("chooseProviderDirectory", "choose_provider_directory"),
+    ("getAutoCollection", "get_auto_collection"),
+    ("updateAutoCollection", "update_auto_collection"),
 ];
 
 macro_rules! dto {
@@ -174,3 +177,24 @@ dto!(ChooseProviderDirectoryRequest {
     provider_id: String
 });
 dto!(ChooseProviderDirectoryResult { api_version: String, provider_id: String, directory: Option<SourceDirectory> });
+
+enumeration!(
+    AutoCollectionState,
+    "kebab-case",
+    Disabled,
+    Idle,
+    Checking,
+    Scanning,
+    Waiting,
+    Backoff
+);
+dto!(AutoCollectionConfig {
+    enabled: bool,
+    interval_minutes: u32
+});
+dto!(UpdateAutoCollectionRequest {
+    expected_revision: String,
+    config: AutoCollectionConfig
+});
+dto!(AutoProviderStatus { provider_id: String, state: AutoCollectionState, job_id: Option<String>, last_success_at: Option<String>, next_check_at: Option<String>, watching: bool, error: Option<ApiError> });
+dto!(AutoCollectionStatus { api_version: String, revision: String, config: AutoCollectionConfig, timezone: String, providers: Vec<AutoProviderStatus> });

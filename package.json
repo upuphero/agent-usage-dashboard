@@ -1,6 +1,6 @@
 {
   "name": "agent-usage-dashboard",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "private": true,
   "packageManager": "pnpm@9.15.0",
   "engines": { "node": ">=24.19.0 <25" },

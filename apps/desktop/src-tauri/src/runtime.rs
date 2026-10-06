@@ -5,7 +5,7 @@ use std::{
     panic::AssertUnwindSafe,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     time::Duration,
 };
@@ -23,6 +23,7 @@ struct ActiveJob {
     cancellation: CancellationToken,
     timezone: String,
     queued: ScanRecord,
+    automatic: bool,
 }
 #[derive(Default)]
 struct TerminalCache {
@@ -52,6 +53,7 @@ pub struct Runtime {
     closing: AtomicBool,
     exit_ready: AtomicBool,
     emit: ScanEmitter,
+    pub scheduler: OnceLock<Arc<crate::scheduler::Scheduler>>,
 }
 impl Runtime {
     #[cfg(test)]
@@ -78,12 +80,37 @@ impl Runtime {
             closing: AtomicBool::new(false),
             exit_ready: AtomicBool::new(false),
             emit,
+            scheduler: OnceLock::new(),
         })
     }
     pub async fn start_scan(
         self: &Arc<Self>,
         request: api::StartScanRequest,
     ) -> Result<api::StartScanResult, CoreError> {
+        self.start_scan_inner(request, None)
+            .await?
+            .ok_or(CoreError::ScanBusy)
+    }
+    pub async fn start_automatic_scan(
+        self: &Arc<Self>,
+        provider: &str,
+        timezone: &str,
+        config: &SourceConfig,
+    ) -> Result<Option<api::StartScanResult>, CoreError> {
+        self.start_scan_inner(
+            api::StartScanRequest {
+                provider_id: provider.into(),
+                timezone: timezone.into(),
+            },
+            Some(config),
+        )
+        .await
+    }
+    async fn start_scan_inner(
+        self: &Arc<Self>,
+        request: api::StartScanRequest,
+        automatic: Option<&SourceConfig>,
+    ) -> Result<Option<api::StartScanResult>, CoreError> {
         application::validate_timezone(&request.timezone)?;
         self.service.source(&request.provider_id)?;
         let mut active = self.active.lock().await;
@@ -100,13 +127,26 @@ impl Runtime {
         if !config.enabled {
             return Err(CoreError::ProviderDisabled);
         }
-        if let Some(job) = active.get(&request.provider_id) {
+        if let Some(expected) = automatic {
+            let settings = self.settings.as_ref().ok_or(CoreError::UnsupportedFilter)?;
+            let (_, timezone, auto) = settings.auto_config().await;
+            if !auto.enabled
+                || timezone != request.timezone
+                || expected.root_path != config.root_path
+                || !active.is_empty()
+            {
+                return Ok(None);
+            }
+        }
+        if let Some(job) = active.get_mut(&request.provider_id) {
             if job.timezone != request.timezone {
                 return Err(CoreError::ScanBusy);
             }
-            return Ok(api::StartScanResult {
+            // A user's joined task must survive turning automatic collection off.
+            job.automatic = false;
+            return Ok(Some(api::StartScanResult {
                 job_id: job.id.clone(),
-            });
+            }));
         }
         let id = uuid::Uuid::new_v4().to_string();
         let cancellation = CancellationToken::default();
@@ -129,6 +169,7 @@ impl Runtime {
                 cancellation: cancellation.clone(),
                 timezone: request.timezone.clone(),
                 queued: queued.clone(),
+                automatic: automatic.is_some(),
             },
         );
         let runtime = self.clone();
@@ -174,7 +215,7 @@ impl Runtime {
         let mut tasks = self.tasks.lock().await;
         tasks.retain(|task| !task.is_finished());
         tasks.push(task);
-        Ok(api::StartScanResult { job_id: id })
+        Ok(Some(api::StartScanResult { job_id: id }))
     }
     pub async fn get_scan(&self, id: &str) -> Result<ScanRecord, CoreError> {
         if id.is_empty() || id.len() > 128 {
@@ -306,7 +347,99 @@ impl Runtime {
             .ok_or_else(|| mapping::error(CoreError::UnsupportedFilter))?;
         let (result, configs) = store.update(request).await?;
         *self.configs.write().await = configs;
+        if let Some(scheduler) = self.scheduler.get() {
+            scheduler.reconfigure(true);
+        }
         Ok(result)
+    }
+    pub async fn auto_context(
+        &self,
+    ) -> Option<(
+        String,
+        String,
+        api::AutoCollectionConfig,
+        BTreeMap<String, SourceConfig>,
+    )> {
+        let _active = self.active.lock().await;
+        let (revision, timezone, config) = self.settings.as_ref()?.auto_config().await;
+        Some((
+            revision,
+            timezone,
+            config,
+            self.configs.read().await.clone(),
+        ))
+    }
+    pub async fn has_active_jobs(&self) -> bool {
+        !self.active.lock().await.is_empty()
+    }
+    pub async fn get_auto_collection(&self) -> Result<api::AutoCollectionStatus, api::ApiError> {
+        let (revision, timezone, config, configs) = self
+            .auto_context()
+            .await
+            .ok_or_else(|| mapping::error(CoreError::UnsupportedFilter))?;
+        let mut status = match self.scheduler.get() {
+            Some(scheduler) => scheduler.status().await,
+            None => None,
+        }
+        .unwrap_or(api::AutoCollectionStatus {
+            api_version: api::API_VERSION.into(),
+            revision: revision.clone(),
+            config: config.clone(),
+            timezone: timezone.clone(),
+            providers: vec![],
+        });
+        status.revision = revision;
+        status.timezone = timezone;
+        status.config = config;
+        status.providers.retain(|p| {
+            status.config.enabled && configs.get(&p.provider_id).is_some_and(|c| c.enabled)
+        });
+        if status.config.enabled {
+            for (provider, _) in configs.iter().filter(|(_, c)| c.enabled) {
+                if !status.providers.iter().any(|p| &p.provider_id == provider) {
+                    status.providers.push(api::AutoProviderStatus {
+                        provider_id: provider.clone(),
+                        state: api::AutoCollectionState::Waiting,
+                        job_id: None,
+                        last_success_at: None,
+                        next_check_at: None,
+                        watching: false,
+                        error: None,
+                    });
+                }
+            }
+        }
+        Ok(status)
+    }
+    pub async fn update_auto_collection(
+        &self,
+        request: api::UpdateAutoCollectionRequest,
+    ) -> Result<api::AutoCollectionStatus, api::ApiError> {
+        {
+            let active = self.active.lock().await;
+            if self.closing.load(Ordering::Acquire) {
+                return Err(mapping::error(CoreError::ShuttingDown));
+            }
+            let store = self
+                .settings
+                .as_ref()
+                .ok_or_else(|| mapping::error(CoreError::UnsupportedFilter))?;
+            let (_, _, previous) = store.auto_config().await;
+            let enabled = request.config.enabled;
+            store.update_auto(request).await?;
+            if !enabled {
+                for job in active.values().filter(|job| job.automatic) {
+                    job.cancellation.cancel();
+                }
+            }
+            if let Some(scheduler) = self.scheduler.get() {
+                scheduler.reconfigure(previous.enabled != enabled);
+            }
+        }
+        if let Some(scheduler) = self.scheduler.get() {
+            scheduler.wake();
+        }
+        self.get_auto_collection().await
     }
     pub async fn remember_directory(
         &self,
@@ -326,6 +459,9 @@ impl Runtime {
     }
     async fn shutdown_with_grace(&self, grace: Duration) {
         self.closing.store(true, Ordering::Release);
+        if let Some(scheduler) = self.scheduler.get() {
+            scheduler.stop().await;
+        }
         for job in self.active.lock().await.values() {
             job.cancellation.cancel();
         }
@@ -371,6 +507,9 @@ impl Runtime {
         self.exit_ready.store(true, Ordering::Release);
     }
     pub fn begin_shutdown(&self) -> bool {
+        if let Some(scheduler) = self.scheduler.get() {
+            scheduler.begin_stop();
+        }
         self.closing
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
@@ -456,6 +595,98 @@ mod tests {
             provider_id: "fixture".into(),
             timezone: zone.into(),
         }
+    }
+    #[tokio::test]
+    async fn auto_start_is_atomic_manual_has_priority_and_disable_cancels_only_owned_jobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut profile = crate::profile::DesktopProfile::load_or_create(dir.path()).unwrap();
+        profile.timezone = "America/Phoenix".into();
+        profile.auto_collection.enabled = true;
+        let store = Arc::new(SettingsStore::new(dir.path(), profile));
+        let mut runtime = runtime();
+        Arc::get_mut(&mut runtime).unwrap().settings = Some(store);
+        let config = SourceConfig {
+            enabled: true,
+            root_path: None,
+        };
+        let manual = runtime
+            .start_scan(request("America/Phoenix"))
+            .await
+            .unwrap();
+        assert!(runtime
+            .start_automatic_scan("fixture", "America/Phoenix", &config)
+            .await
+            .unwrap()
+            .is_none());
+        runtime
+            .update_auto_collection(api::UpdateAutoCollectionRequest {
+                expected_revision: "1".into(),
+                config: api::AutoCollectionConfig {
+                    enabled: false,
+                    interval_minutes: 1,
+                },
+            })
+            .await
+            .unwrap();
+        assert!(!runtime
+            .active
+            .lock()
+            .await
+            .values()
+            .next()
+            .unwrap()
+            .cancellation
+            .is_cancelled());
+        assert_eq!(
+            runtime
+                .update_settings(api::UpdateSettingsRequest {
+                    expected_revision: "2".into(),
+                    timezone: "UTC".into(),
+                    providers: vec![]
+                })
+                .await
+                .unwrap_err()
+                .code,
+            api::ErrorCode::ScanBusy
+        );
+        runtime.cancel_scan(&manual.job_id).await.unwrap();
+        runtime.wait_for_idle().await;
+        runtime
+            .update_auto_collection(api::UpdateAutoCollectionRequest {
+                expected_revision: "2".into(),
+                config: api::AutoCollectionConfig {
+                    enabled: true,
+                    interval_minutes: 1,
+                },
+            })
+            .await
+            .unwrap();
+        let automatic = runtime
+            .start_automatic_scan("fixture", "America/Phoenix", &config)
+            .await
+            .unwrap()
+            .unwrap();
+        runtime
+            .update_auto_collection(api::UpdateAutoCollectionRequest {
+                expected_revision: "3".into(),
+                config: api::AutoCollectionConfig {
+                    enabled: false,
+                    interval_minutes: 1,
+                },
+            })
+            .await
+            .unwrap();
+        runtime.wait_for_idle().await;
+        assert_eq!(
+            runtime.get_scan(&automatic.job_id).await.unwrap().state,
+            ScanState::Cancelled
+        );
+        assert!(runtime
+            .start_automatic_scan("fixture", "America/Phoenix", &config)
+            .await
+            .unwrap()
+            .is_none());
+        runtime.shutdown().await;
     }
     #[tokio::test]
     async fn duplicate_clicks_merge_timezone_change_is_busy_and_shutdown_cancels() {

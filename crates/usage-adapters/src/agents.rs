@@ -128,6 +128,44 @@ impl UsageSource for AgentAdapter {
             Err(error) => Err(error),
         }
     }
+    async fn inspect(
+        &self,
+        request: CollectRequest,
+        cancellation: CancellationToken,
+    ) -> Result<SourceObservation, CoreError> {
+        if !request.config.enabled {
+            return Err(CoreError::ProviderDisabled);
+        }
+        let roots = self.roots(&request.config)?;
+        let dataset = self.dataset.clone();
+        let kind = self.kind;
+        tokio::task::spawn_blocking(move || {
+            crate::changes::inspect(
+                crate::changes::Layout::Agent(kind),
+                &roots,
+                &dataset,
+                &request.timezone,
+                &format!("{}-1|{}", kind.product(), crate::process::COLLECTOR_VERSION),
+                &cancellation,
+            )
+        })
+        .await
+        .map_err(|_| CoreError::CollectionFailed)?
+    }
+    fn watch(
+        &self,
+        config: &SourceConfig,
+        changed: ChangeCallback,
+    ) -> Result<Box<dyn SourceWatch>, CoreError> {
+        if !config.enabled {
+            return Err(CoreError::ProviderDisabled);
+        }
+        crate::changes::watch(
+            crate::changes::Layout::Agent(self.kind),
+            self.roots(config)?,
+            changed,
+        )
+    }
     async fn collect(
         &self,
         request: CollectRequest,

@@ -1,8 +1,9 @@
-import type { UsageClient } from '../../client';
+import type { UsageClient, UsageEvent } from '../../client';
 import {
   API_VERSION, type ApiInfo, type ProviderSummary, type StartScanRequest, type ScanSummary,
   type OverviewQuery, type OverviewResult, type SessionQuery, type SessionPage, type ExportRequest,
   type ExportResult, type UsageAggregate, type SettingsResult, type UpdateSettingsRequest, type ChooseProviderDirectoryResult,
+  type AutoCollectionStatus, type AutoCollectionConfig, type UpdateAutoCollectionRequest,
 } from '../../generated/usage';
 import { apiError, assertApiVersion, assertResponseVersion } from '../../protocol';
 import { delay, isActiveScan, waitForScan } from '../scan';
@@ -16,7 +17,7 @@ import {
 export const DEMO_SCENARIOS = ['partial', 'stale', 'empty', 'error', 'loading', 'scan-error', 'limited', 'version-mismatch'] as const;
 export type DemoScenario = typeof DEMO_SCENARIOS[number];
 
-interface DemoJob { summary: ScanSummary; clock: number; timezone: string }
+interface DemoJob { summary: ScanSummary; clock: number; timezone: string; automatic: boolean; generation: number }
 
 export class MockUsageClient implements UsageClient {
   private readonly jobs = new Map<string, DemoJob>();
@@ -24,6 +25,14 @@ export class MockUsageClient implements UsageClient {
   private scanFailed = false;
   private readonly selectedDirectories = new Map<string, string>();
   private directoryCounter = 0;
+  private autoConfig: AutoCollectionConfig = { enabled: false, intervalMinutes: 5 };
+  private listeners = new Set<(event: UsageEvent) => void>();
+  private autoTimer: ReturnType<typeof setTimeout> | undefined;
+  private autoDeadline = 0;
+  private readonly completions = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly generations = new Map<string, number>();
+  private readonly baselines = new Map<string, number>();
+  private readonly eligibleAt = new Map<string, number>();
   private settings: SettingsResult = {
     apiVersion: API_VERSION, revision: '1', timezone: DEMO_TIMEZONE,
     providers: PROVIDERS.map(provider => ({ providerId: provider.providerId, enabled: provider.enabled, directory: null })),
@@ -55,6 +64,12 @@ export class MockUsageClient implements UsageClient {
           snapshotsReplaced: failed ? 0 : 2, rowsWritten: failed ? 0 : 9,
         };
         this.scanFailed = failed;
+        if (job.automatic) {
+          if (!failed) this.baselines.set(job.summary.providerId, job.generation);
+          this.eligibleAt.set(job.summary.providerId, Date.now() + this.autoConfig.intervalMinutes * 60000);
+          this.scheduleCheck();
+        }
+        this.emit({ kind: 'scan', scan: structuredClone(job.summary) });
       } else if (elapsed >= this.scanMs / 4) job.summary.state = 'running';
     }
     return structuredClone(job.summary);
@@ -89,12 +104,13 @@ export class MockUsageClient implements UsageClient {
     });
   }
 
-  async startScan(request: StartScanRequest): Promise<{ jobId: string }> {
+  async startScan(request: StartScanRequest, automatic = false): Promise<{ jobId: string }> {
     this.checkProviders([request.providerId]);
     await delay(this.latencyMs);
     for (const job of this.jobs.values()) {
       if (job.summary.providerId === request.providerId && isActiveScan(this.readJob(job.summary.jobId))) {
         if (job.timezone !== request.timezone) throw apiError('SCAN_BUSY', '此来源有其他时区的活动扫描，请等待任务完成。', true);
+        if (!automatic) job.automatic = false;
         return { jobId: job.summary.jobId };
       }
     }
@@ -102,9 +118,11 @@ export class MockUsageClient implements UsageClient {
     if (!this.settings.providers.find(provider => provider.providerId === request.providerId)!.enabled) throw apiError('PROVIDER_DISABLED', '该演示来源已关闭。');
     const jobId = `demo-scan-${++this.counter}`;
     this.jobs.set(jobId, {
-      clock: Date.now(), timezone: request.timezone,
+      clock: Date.now(), timezone: request.timezone, automatic, generation: this.generations.get(request.providerId) ?? 0,
       summary: { apiVersion: API_VERSION, jobId, providerId: request.providerId, state: 'queued', startedAt: new Date().toISOString(), finishedAt: null, error: null, snapshotsReplaced: 0, rowsWritten: 0 },
     });
+    this.emit({ kind: 'scan', scan: structuredClone(this.jobs.get(jobId)!.summary) });
+    this.completions.set(jobId, setTimeout(() => { this.completions.delete(jobId); this.readJob(jobId); void this.getAutoCollection().then(status => this.emit({ kind: 'auto', status })); }, this.scanMs));
     return { jobId };
   }
   getScan(jobId: string): Promise<ScanSummary> {
@@ -115,6 +133,8 @@ export class MockUsageClient implements UsageClient {
     if (isActiveScan(summary)) {
       const job = this.jobs.get(jobId)!;
       job.summary = { ...summary, state: 'cancelled', finishedAt: new Date().toISOString() };
+      this.eligibleAt.set(summary.providerId, Date.now() + this.autoConfig.intervalMinutes * 60000);
+      this.emit({ kind: 'scan', scan: structuredClone(job.summary) });
     }
   }
 
@@ -158,7 +178,7 @@ export class MockUsageClient implements UsageClient {
       buckets: empty ? [] : buckets,
       coverage: (empty ? selectedProviders : ids).map(id => empty ? { ...PROVIDERS.find(p => p.providerId === id)!.coverage[0], state: 'complete' as const, range: query.range } : PROVIDERS.find(p => p.providerId === id)!.coverage[0]),
       warnings: ['DEMO_DATA', ...(!empty && ids.includes('ccusage.antigravity') ? ['MODEL_BREAKDOWN_UNAVAILABLE', 'MISSING_PRICING'] : [])],
-      stale: this.scenario === 'stale' || this.scanFailed, lastSuccessAt: DEMO_UPDATED,
+      stale: this.scenario === 'stale' || this.scanFailed, lastSuccessAt: [...this.jobs.values()].reverse().find(job => job.summary.state === 'succeeded' && selectedProviders.includes(job.summary.providerId))?.summary.finishedAt ?? DEMO_UPDATED,
     });
   }
 
@@ -209,6 +229,64 @@ export class MockUsageClient implements UsageClient {
       target.directory = update.directoryRef === null ? null : { directoryRef: update.directoryRef, label: '合成演示目录 · 未读取日志' };
     }
     next.revision = (BigInt(next.revision) + 1n).toString(); this.settings = next;
+    this.baselines.clear(); this.scheduleCheck();
     return structuredClone(next);
+  }
+  private emit(event: UsageEvent) { for (const listener of this.listeners) listener(event); }
+  /** Synthetic source edit for browser/transport acceptance. Never reads local files. */
+  simulateSourceChange(providerId: string) {
+    this.generations.set(providerId, (this.generations.get(providerId) ?? 0) + 1); this.scheduleCheck();
+  }
+  private scheduleCheck(wait = 2000) {
+    if (!this.autoConfig.enabled) return;
+    const deadline = Date.now() + wait;
+    if (this.autoTimer !== undefined) { if (deadline >= this.autoDeadline) return; clearTimeout(this.autoTimer); }
+    this.autoDeadline = deadline;
+    this.autoTimer = setTimeout(() => { this.autoTimer = undefined; void this.checkAutomatically(); }, wait);
+  }
+  private async checkAutomatically() {
+    if (!this.autoConfig.enabled) return;
+    if (![...this.jobs.values()].some(job => isActiveScan(this.readJob(job.summary.jobId)))) {
+      const source = this.settings.providers.find(provider => provider.enabled && Date.now() >= (this.eligibleAt.get(provider.providerId) ?? 0)
+        && this.baselines.get(provider.providerId) !== (this.generations.get(provider.providerId) ?? 0));
+      if (source) await this.startScan({ providerId: source.providerId, timezone: this.settings.timezone }, true);
+    }
+    this.emit({ kind: 'auto', status: await this.getAutoCollection() });
+    this.scheduleCheck(this.autoConfig.intervalMinutes * 60000);
+  }
+  async getAutoCollection(): Promise<AutoCollectionStatus> {
+    this.checkVersion();
+    return { apiVersion: API_VERSION, revision: this.settings.revision, timezone: this.settings.timezone, config: structuredClone(this.autoConfig),
+      providers: this.autoConfig.enabled ? this.settings.providers.filter(p => p.enabled).map(provider => {
+        const latest = [...this.jobs.values()].reverse().find(job => job.automatic && job.summary.providerId === provider.providerId);
+        const scan = latest ? this.readJob(latest.summary.jobId) : undefined;
+        return { providerId: provider.providerId, state: scan && isActiveScan(scan) ? 'scanning' : scan?.state === 'failed' ? 'backoff' : this.baselines.has(provider.providerId) ? 'idle' : 'waiting',
+          jobId: scan && isActiveScan(scan) ? scan.jobId : null, watching: true, error: scan?.error ?? null,
+          lastSuccessAt: [...this.jobs.values()].reverse().find(job => job.summary.providerId === provider.providerId && job.summary.state === 'succeeded')?.summary.finishedAt ?? null,
+          nextCheckAt: new Date(Math.max(Date.now(), this.eligibleAt.get(provider.providerId) ?? this.autoDeadline)).toISOString() };
+      }) : [] };
+  }
+  async updateAutoCollection(request: UpdateAutoCollectionRequest): Promise<AutoCollectionStatus> {
+    this.checkVersion();
+    if (![1, 5, 15].includes(request.config.intervalMinutes) || typeof request.config.enabled !== 'boolean') throw apiError('INVALID_QUERY', '自动采集间隔无效。');
+    if (request.expectedRevision !== this.settings.revision) throw apiError('SETTINGS_CONFLICT', '设置已变化，请重新读取。');
+    const wasEnabled = this.autoConfig.enabled;
+    this.autoConfig = structuredClone(request.config); this.settings.revision = (BigInt(this.settings.revision) + 1n).toString();
+    if (this.autoTimer !== undefined) { clearTimeout(this.autoTimer); this.autoTimer = undefined; }
+    if (!this.autoConfig.enabled) {
+      for (const job of this.jobs.values()) if (job.automatic && isActiveScan(this.readJob(job.summary.jobId))) await this.cancelScan(job.summary.jobId);
+      this.baselines.clear();
+    } else { if (!wasEnabled) { this.baselines.clear(); this.eligibleAt.clear(); } this.scheduleCheck(); }
+    const status = await this.getAutoCollection(); this.emit({ kind: 'auto', status }); return status;
+  }
+  async subscribeUsage(listener: (event: UsageEvent) => void): Promise<() => void> {
+    this.listeners.add(listener); listener({ kind: 'resync' }); this.scheduleCheck();
+    for (const [id, job] of this.jobs) if (isActiveScan(job.summary) && !this.completions.has(id)) {
+      this.completions.set(id, setTimeout(() => { this.completions.delete(id); this.readJob(id); }, Math.max(0, this.scanMs - (Date.now() - job.clock))));
+    }
+    return () => { this.listeners.delete(listener); if (this.listeners.size === 0) {
+      if (this.autoTimer !== undefined) { clearTimeout(this.autoTimer); this.autoTimer = undefined; }
+      for (const timer of this.completions.values()) clearTimeout(timer); this.completions.clear();
+    } };
   }
 }

@@ -1,6 +1,7 @@
 // GENERATED from crates/usage-contracts/src/lib.rs. Do not edit.
-export const API_VERSION = "1.1.0" as const;
+export const API_VERSION = "1.2.0" as const;
 export const SCAN_EVENT = "usage://scan-updated" as const;
+export const AUTO_COLLECTION_EVENT = "usage://auto-collection-updated" as const;
 export const COMMANDS = {
   getApiInfo: "get_api_info",
   listProviders: "list_providers",
@@ -13,6 +14,8 @@ export const COMMANDS = {
   getSettings: "get_settings",
   updateSettings: "update_settings",
   chooseProviderDirectory: "choose_provider_directory",
+  getAutoCollection: "get_auto_collection",
+  updateAutoCollection: "update_auto_collection",
 } as const;
 export type Accuracy = "exact" | "derived" | "estimated" | "unavailable";
 export type ReportKind = "daily" | "session";
@@ -24,6 +27,7 @@ export type ExportFormat = "json" | "csv";
 export type CostKind = "api-equivalent-estimate";
 export type ErrorCode = "INVALID_QUERY" | "INVALID_DATA" | "PROVIDER_NOT_FOUND" | "PROVIDER_DISABLED" | "SOURCE_NOT_DETECTED" | "PERMISSION_DENIED" | "SCHEMA_UNSUPPORTED" | "COVERAGE_INCOMPLETE" | "TIMEOUT" | "OUTPUT_LIMIT_EXCEEDED" | "CANCELLED" | "STORAGE" | "STORAGE_SCHEMA_NEWER" | "UNSUPPORTED_FILTER" | "DATASET_CONFLICT" | "OVERFLOW" | "SCAN_NOT_FOUND" | "SCAN_BUSY" | "SHUTTING_DOWN" | "COLLECTION_FAILED" | "API_VERSION_UNSUPPORTED" | "EXPORT_FAILED" | "INTERNAL" | "SETTINGS_CONFLICT" | "INVALID_DIRECTORY_REF";
 export const ERROR_CODES = ["INVALID_QUERY", "INVALID_DATA", "PROVIDER_NOT_FOUND", "PROVIDER_DISABLED", "SOURCE_NOT_DETECTED", "PERMISSION_DENIED", "SCHEMA_UNSUPPORTED", "COVERAGE_INCOMPLETE", "TIMEOUT", "OUTPUT_LIMIT_EXCEEDED", "CANCELLED", "STORAGE", "STORAGE_SCHEMA_NEWER", "UNSUPPORTED_FILTER", "DATASET_CONFLICT", "OVERFLOW", "SCAN_NOT_FOUND", "SCAN_BUSY", "SHUTTING_DOWN", "COLLECTION_FAILED", "API_VERSION_UNSUPPORTED", "EXPORT_FAILED", "INTERNAL", "SETTINGS_CONFLICT", "INVALID_DIRECTORY_REF"] as const;
+export type AutoCollectionState = "disabled" | "idle" | "checking" | "scanning" | "waiting" | "backoff";
 export interface Metric<T> {
   value: T | null;
   accuracy: Accuracy;
@@ -249,4 +253,28 @@ export interface ChooseProviderDirectoryResult {
   apiVersion: string;
   providerId: string;
   directory: SourceDirectory | null;
+}
+export interface AutoCollectionConfig {
+  enabled: boolean;
+  intervalMinutes: number;
+}
+export interface UpdateAutoCollectionRequest {
+  expectedRevision: string;
+  config: AutoCollectionConfig;
+}
+export interface AutoProviderStatus {
+  providerId: string;
+  state: AutoCollectionState;
+  jobId: string | null;
+  lastSuccessAt: string | null;
+  nextCheckAt: string | null;
+  watching: boolean;
+  error: ApiError | null;
+}
+export interface AutoCollectionStatus {
+  apiVersion: string;
+  revision: string;
+  config: AutoCollectionConfig;
+  timezone: string;
+  providers: Array<AutoProviderStatus>;
 }

@@ -4,10 +4,11 @@ import { Icon } from '../components/Icon';
 import { ErrorNotice, Notice, Panel } from '../components/ui';
 import { useI18n } from '../i18n/I18nContext';
 import { localizeSourceText } from '../i18n/messages';
+import { AutomaticCollection, type AutomaticControls } from './AutomaticCollection';
 
 export type Theme = 'dark' | 'light' | 'system';
 export interface SettingsControls { value: SettingsResult; pending: boolean; choosing: boolean; busy: boolean; saved?: boolean; error?: ApiError; save: (request: UpdateSettingsRequest) => void; choose?: (providerId: string) => Promise<SourceDirectory | null>; reload: () => void }
-export function Settings({ theme, setTheme, timezone, setTimezone, demo, providers, api, modelFiltered, exporting, onExport, controls, settingsLoading = false, settingsError }: { theme: Theme; setTheme: (theme: Theme) => void; timezone: string; setTimezone: (timezone: string) => void; demo: boolean; providers: ProviderSummary[]; api: ApiInfo; modelFiltered: boolean; exporting: boolean; onExport: (format: ExportFormat) => void; controls?: SettingsControls; settingsLoading?: boolean; settingsError?: ApiError }) {
+export function Settings({ theme, setTheme, timezone, setTimezone, demo, providers, api, modelFiltered, exporting, onExport, controls, automatic, settingsLoading = false, settingsError }: { theme: Theme; setTheme: (theme: Theme) => void; timezone: string; setTimezone: (timezone: string) => void; demo: boolean; providers: ProviderSummary[]; api: ApiInfo; modelFiltered: boolean; exporting: boolean; onExport: (format: ExportFormat) => void; controls?: SettingsControls; automatic?: AutomaticControls; settingsLoading?: boolean; settingsError?: ApiError }) {
   const { t, language } = useI18n();
   const initial = controls ? { timezone: controls.value.timezone, providers: controls.value.providers.map(provider => ({ providerId: provider.providerId, enabled: provider.enabled, directoryRef: provider.directory?.directoryRef ?? null })) } : null;
   const [draft, setDraft] = useState(initial);
@@ -38,6 +39,7 @@ export function Settings({ theme, setTheme, timezone, setTimezone, demo, provide
     {controls?.saved && !dirty && <Notice tone="success">{demo ? t("演示设置已保存，未修改磁盘文件。") : t("统计设置已保存。若更改了时区，请重新扫描来源。")}</Notice>}
     {demo && controls && <Notice>{t("演示设置仅保留在当前页面会话，刷新后恢复；目录选择不访问系统文件。")}</Notice>}
   </Panel>
+  <AutomaticCollection controls={automatic} names={Object.fromEntries(providers.map(provider => [provider.providerId, provider.displayName]))} />
   <Panel title={t("导出")} eyebrow={t("导出报表")}><div className="setting-row"><div><h3>{t("JSON 完整历史归档")}</h3><p className="small muted">{t("包含所选来源与时区的完整历史及数据集身份；不受日期范围限制。")}</p>{modelFiltered && <p className="small warning-text">{t("请先清除模型筛选，再导出完整归档。")}</p>}</div><button className="button" disabled={exporting || modelFiltered || !api.capabilities.includes('export-json-full-history')} onClick={() => onExport('json')}><Icon name="download" />{t("导出 JSON")}</button></div><div className="setting-row"><div><h3>{t("CSV 用量报表")}</h3><p className="small muted">{t("使用当前日期、来源与模型筛选，用于阅读分析。")}</p></div><button className="button" disabled={exporting || !api.capabilities.includes('export-csv')} onClick={() => onExport('csv')}><Icon name="download" />{t("导出 CSV")}</button></div>{demo && <Notice>{t("演示导出仅模拟请求与结果，不会保存文件。")}</Notice>}</Panel>
   <Panel title={t("本地数据与隐私")} eyebrow={t("本地优先")}><div className="privacy-heading"><Icon name="shield" /><div><h3>{t("用量留在本机")}</h3><p className="small muted">{t("本地统计默认无遥测；仅提取用量元数据，不持久化或上传聊天正文。")}</p></div></div><div className="setting-row"><div><h3>{t("数据目录与维护")}</h3><p className="small muted">{t("目录选择、备份、清除与开机启动暂未开放。")}</p></div><button className="button" disabled>{t("管理数据")}</button></div><div className="panel-footer"><span>{t('应用 {appVersion} · 接口 {apiVersion}', { appVersion: api.appVersion, apiVersion: api.apiVersion })}</span><span>Windows x64 / macOS Apple Silicon ARM64</span></div></Panel></div>;
 }

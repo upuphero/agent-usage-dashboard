@@ -97,6 +97,97 @@ fn sidecar_path(executable_dir: &Path) -> Result<PathBuf, CoreError> {
 mod tests {
     use super::*;
     #[tokio::test]
+    #[ignore = "requires target-native pinned sidecar; automatic/manual equivalence on synthetic inputs"]
+    async fn automatic_scheduler_matches_manual_full_snapshot_and_stops_on_exit() {
+        let binary = std::env::var_os("CCUSAGE_TEST_BINARY").expect("prepare pinned sidecar first");
+        let dir = tempfile::tempdir().unwrap();
+        let logs = dir.path().join("fixture logs/projects/synthetic");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(
+            logs.join("session-a.jsonl"),
+            include_bytes!(
+                "../../../../tests/fixtures/claude-code/logs/projects/synthetic/session-a.jsonl"
+            ),
+        )
+        .unwrap();
+        let mut profile = DesktopProfile::load_or_create(dir.path()).unwrap();
+        profile.claude_enabled = true;
+        profile.timezone = "America/Phoenix".into();
+        profile.claude_root_path = Some(dir.path().join("fixture logs").to_string_lossy().into());
+        profile.auto_collection.enabled = true;
+        profile.auto_collection.interval_minutes = 1;
+        profile.persist(dir.path()).unwrap();
+        let (service, configs, settings) = assemble(dir.path(), Path::new(&binary)).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let runtime = crate::runtime::Runtime::new_with_settings(
+            service,
+            configs,
+            Arc::new(move |scan| {
+                let _ = tx.send(scan);
+            }),
+            Some(settings),
+        );
+        let scheduler = crate::scheduler::Scheduler::new(Arc::new(|_| {}));
+        runtime.scheduler.set(scheduler.clone()).ok().unwrap();
+        scheduler.start(&runtime).await;
+        let scan = tokio::time::timeout(std::time::Duration::from_secs(90), async {
+            loop {
+                let scan = rx.recv().await.unwrap();
+                if matches!(
+                    scan.state,
+                    usage_contracts::ScanState::Succeeded | usage_contracts::ScanState::Failed
+                ) {
+                    break scan;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(scan.state, usage_contracts::ScanState::Succeeded);
+        runtime.wait_for_idle().await;
+        let before = runtime
+            .service
+            .repository
+            .load_snapshots(usage_core::SnapshotFilter::default())
+            .await
+            .unwrap();
+        let manual = runtime
+            .start_scan(usage_contracts::StartScanRequest {
+                provider_id: "ccusage.claude-code".into(),
+                timezone: profile.timezone.clone(),
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(90), async {
+            while !runtime
+                .get_scan(&manual.job_id)
+                .await
+                .unwrap()
+                .state
+                .is_terminal()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        runtime.wait_for_idle().await;
+        let after = runtime
+            .service
+            .repository
+            .load_snapshots(usage_core::SnapshotFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(before.len(), after.len());
+        for (automatic, manual) in before.iter().zip(&after) {
+            assert_eq!(automatic.key, manual.key);
+            assert_eq!(automatic.rows, manual.rows);
+            assert_eq!(manual.revision, automatic.revision + 1);
+        }
+        runtime.shutdown().await;
+        assert!(runtime.is_exit_ready());
+    }
+    #[tokio::test]
     #[ignore = "requires target-native pinned sidecar; uses only copied synthetic logs"]
     async fn composition_to_runtime_maps_ipc_dtos_and_persists_three_scans() {
         let binary = std::env::var_os("CCUSAGE_TEST_BINARY").expect("prepare pinned sidecar first");

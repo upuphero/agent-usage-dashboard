@@ -1,15 +1,19 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { UsageClient } from '../../client';
+import { listen } from '@tauri-apps/api/event';
+import type { UsageClient, UsageEvent } from '../../client';
 import {
   COMMANDS, type ApiInfo, type ProviderSummary, type StartScanRequest, type StartScanResult,
   type ScanSummary, type OverviewQuery, type OverviewResult, type SessionQuery, type SessionPage,
   type ExportRequest, type ExportResult, type SettingsResult, type UpdateSettingsRequest, type ChooseProviderDirectoryResult,
+  SCAN_EVENT, AUTO_COLLECTION_EVENT, type AutoCollectionStatus, type UpdateAutoCollectionRequest,
 } from '../../generated/usage';
 import { apiError, assertResponseVersion, normalizeError } from '../../protocol';
 import { waitForScan } from '../scan';
 import { isTauriRuntime } from './runtime';
 
 export type CommandInvoker = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+export type EventSubscriber = (name: string, listener: (payload: unknown) => void) => Promise<() => void>;
+const desktopListen: EventSubscriber = (name, listener) => listen(name, event => listener(event.payload));
 
 const desktopInvoke: CommandInvoker = async (command, args) => {
   if (!isTauriRuntime()) {
@@ -21,7 +25,7 @@ const desktopInvoke: CommandInvoker = async (command, args) => {
 export class TauriUsageClient implements UsageClient {
   private negotiation: Promise<ApiInfo> | undefined;
 
-  constructor(private readonly send: CommandInvoker = desktopInvoke, private readonly pollMs = 750) {}
+  constructor(private readonly send: CommandInvoker = desktopInvoke, private readonly pollMs = 750, private readonly events: EventSubscriber = desktopListen, private readonly resyncMs = 15000) {}
 
   private async command<T>(command: string, request?: unknown, language?: 'zh' | 'en'): Promise<T> {
     try {
@@ -68,4 +72,34 @@ export class TauriUsageClient implements UsageClient {
   getSettings(): Promise<SettingsResult> { return this.settingsCommand('settings-read', COMMANDS.getSettings); }
   updateSettings(request: UpdateSettingsRequest): Promise<SettingsResult> { return this.settingsCommand('settings-write', COMMANDS.updateSettings, request); }
   chooseProviderDirectory(providerId: string, language: 'zh' | 'en' = 'zh'): Promise<ChooseProviderDirectoryResult> { return this.settingsCommand('source-directory-selection', COMMANDS.chooseProviderDirectory, { providerId }, language); }
+  getAutoCollection(): Promise<AutoCollectionStatus> { return this.settingsCommand('auto-full-scan', COMMANDS.getAutoCollection); }
+  updateAutoCollection(request: UpdateAutoCollectionRequest): Promise<AutoCollectionStatus> { return this.settingsCommand('auto-full-scan', COMMANDS.updateAutoCollection, request); }
+  async subscribeUsage(listener: (event: UsageEvent) => void): Promise<() => void> {
+    const info = await this.getApiInfo();
+    let closed = false; let connected = false; let connecting = false;
+    const removers: Array<() => void> = [];
+    const connect = async () => {
+      if (closed || connected || connecting || !info.capabilities.includes('scan-events')) return;
+      connecting = true;
+      const acquired: Array<() => void> = [];
+      try {
+        acquired.push(await this.events(SCAN_EVENT, payload => { if (!closed) listener({ kind: 'scan', scan: assertResponseVersion(payload as ScanSummary) }); }));
+        if (info.capabilities.includes('auto-full-scan')) acquired.push(await this.events(AUTO_COLLECTION_EVENT, payload => { if (!closed) listener({ kind: 'auto', status: assertResponseVersion(payload as AutoCollectionStatus) }); }));
+        if (closed) acquired.forEach(remove => remove());
+        else { removers.push(...acquired); connected = true; }
+      } catch { acquired.forEach(remove => remove()); }
+      finally { connecting = false; }
+    };
+    await connect();
+    const resync = () => { if (!closed) { listener({ kind: 'resync' }); void connect(); } };
+    const timer = setInterval(resync, this.resyncMs);
+    const visible = () => { if (document.visibilityState === 'visible') resync(); };
+    if (typeof window !== 'undefined') window.addEventListener('focus', resync);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visible);
+    resync();
+    return () => { closed = true; clearInterval(timer); removers.splice(0).forEach(remove => remove());
+      if (typeof window !== 'undefined') window.removeEventListener('focus', resync);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visible);
+    };
+  }
 }

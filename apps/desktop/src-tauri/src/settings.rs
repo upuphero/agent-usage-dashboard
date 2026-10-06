@@ -41,6 +41,55 @@ impl SettingsStore {
     pub async fn get(&self) -> api::SettingsResult {
         view(&self.state.lock().await.profile)
     }
+    pub async fn auto_config(&self) -> (String, String, api::AutoCollectionConfig) {
+        let state = self.state.lock().await;
+        (
+            state.profile.settings_revision.to_string(),
+            state.profile.timezone.clone(),
+            api::AutoCollectionConfig {
+                enabled: state.profile.auto_collection.enabled,
+                interval_minutes: state.profile.auto_collection.interval_minutes,
+            },
+        )
+    }
+    /// Independent write: never accepts source paths, provider switches or timezone.
+    pub async fn update_auto(
+        &self,
+        request: api::UpdateAutoCollectionRequest,
+    ) -> Result<(), api::ApiError> {
+        let revision = request
+            .expected_revision
+            .parse::<u64>()
+            .map_err(|_| mapping::error(CoreError::InvalidQuery))?;
+        if revision.to_string() != request.expected_revision {
+            return Err(mapping::error(CoreError::InvalidQuery));
+        }
+        if !matches!(request.config.interval_minutes, 1 | 5 | 15) {
+            return Err(mapping::error(CoreError::InvalidQuery));
+        }
+        let mut state = self.state.lock().await;
+        if request.expected_revision != state.profile.settings_revision.to_string() {
+            return Err(settings_error(
+                api::ErrorCode::SettingsConflict,
+                "设置已被更新，请重新读取后保存。",
+            ));
+        }
+        let mut next = state.profile.clone();
+        next.auto_collection.enabled = request.config.enabled;
+        next.auto_collection.interval_minutes = request.config.interval_minutes;
+        next.settings_revision = next
+            .settings_revision
+            .checked_add(1)
+            .ok_or_else(|| mapping::error(CoreError::Overflow))?;
+        let write = next.clone();
+        let directory = self.directory.clone();
+        tokio::task::spawn_blocking(move || write.persist(&directory))
+            .await
+            .map_err(|_| mapping::error(CoreError::Storage))?
+            .map_err(mapping::error)?;
+        state.profile = next;
+        Ok(())
+    }
     pub async fn take_timezone_rescan(&self, providers: &[String]) -> Option<String> {
         let mut state = self.state.lock().await;
         if !state.profile.timezone_needs_rescan || state.timezone_rescans.is_some() {
@@ -262,6 +311,37 @@ fn io_error(error: std::io::Error) -> CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn automatic_configuration_validates_intervals_revision_and_persists_independently() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = DesktopProfile::load_or_create(dir.path()).unwrap();
+        let store = SettingsStore::new(dir.path(), original.clone());
+        let update = |revision: &str, interval| api::UpdateAutoCollectionRequest {
+            expected_revision: revision.into(),
+            config: api::AutoCollectionConfig {
+                enabled: true,
+                interval_minutes: interval,
+            },
+        };
+        assert_eq!(
+            store.update_auto(update("1", 2)).await.unwrap_err().code,
+            api::ErrorCode::InvalidQuery
+        );
+        for (revision, interval) in [("1", 1), ("2", 5), ("3", 15)] {
+            store.update_auto(update(revision, interval)).await.unwrap();
+        }
+        assert_eq!(
+            store.update_auto(update("3", 5)).await.unwrap_err().code,
+            api::ErrorCode::SettingsConflict
+        );
+        let reopened = DesktopProfile::load_or_create(dir.path()).unwrap();
+        assert!(reopened.auto_collection.enabled);
+        assert_eq!(reopened.auto_collection.interval_minutes, 15);
+        assert_eq!(reopened.timezone, original.timezone);
+        assert_eq!(reopened.device_id, original.device_id);
+        assert_eq!(reopened.claude_dataset_id, original.claude_dataset_id);
+        assert!(!reopened.claude_enabled);
+    }
     #[tokio::test]
     async fn migration_rebuild_remains_pending_until_all_enabled_sources_succeed() {
         let directory = tempfile::tempdir().unwrap();

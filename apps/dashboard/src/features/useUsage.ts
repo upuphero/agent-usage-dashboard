@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
+import type { UsageEvent } from '../api/client';
 import { useUsageClient } from '../app/UsageContext';
-import type { ExportRequest, OverviewQuery, SessionQuery, ScanSummary, UpdateSettingsRequest } from '../api/generated/usage';
+import type { ExportRequest, OverviewQuery, SessionQuery, ScanSummary, UpdateSettingsRequest, UpdateAutoCollectionRequest } from '../api/generated/usage';
 import { apiError, assertResponseVersion, normalizeError } from '../api/protocol';
 import { useI18n } from '../i18n/I18nContext';
 
@@ -79,4 +81,34 @@ export function useSettings(enabled: boolean) {
     return assertResponseVersion(await client.chooseProviderDirectory(providerId, language));
   } });
   return { query, save, choose, canRead: !!client.getSettings, canWrite: !!client.updateSettings, canChoose: !!client.chooseProviderDirectory };
+}
+export function useAutoCollection(enabled: boolean) {
+  const client = useUsageClient(); const cache = useQueryClient();
+  const query = useQuery({ queryKey: ['usage', 'auto'], enabled: enabled && !!client.getAutoCollection,
+    queryFn: async () => { if (!client.getAutoCollection) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。'); return assertResponseVersion(await client.getAutoCollection()); } });
+  const save = useMutation({ mutationFn: async (request: UpdateAutoCollectionRequest) => {
+    if (!client.updateAutoCollection) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。');
+    return assertResponseVersion(await client.updateAutoCollection(request));
+  }, onSuccess: async result => { cache.setQueryData(['usage', 'auto'], result); await cache.invalidateQueries({ queryKey: ['usage', 'settings'] }); } });
+  const cancel = useMutation({ mutationFn: (jobId: string) => client.cancelScan(jobId), onSuccess: () => cache.invalidateQueries({ queryKey: ['usage', 'auto'] }) });
+  return { query, save, cancel };
+}
+/** One subscription per app. Transport owns fallback polling and reconnect/focus detection. */
+export function useBackgroundUsage(enabled: boolean) {
+  const client = useUsageClient(); const cache = useQueryClient();
+  useEffect(() => {
+    if (!enabled || !client.subscribeUsage) return;
+    let disposed = false; let remove: (() => void) | undefined;
+    void client.subscribeUsage(event => {
+      if (disposed) return;
+      applyBackgroundEvent(cache, event);
+    }).then(unsubscribe => { if (disposed) unsubscribe(); else remove = unsubscribe; }).catch(() => {
+      if (!disposed) void cache.invalidateQueries({ queryKey: ['usage', 'providers'] });
+    });
+    return () => { disposed = true; remove?.(); };
+  }, [enabled, client, cache]);
+}
+export function applyBackgroundEvent(cache: QueryClient, event: UsageEvent) {
+  if (event.kind === 'auto') { cache.setQueryData(['usage', 'auto'], event.status); return; }
+  void cache.invalidateQueries({ queryKey: ['usage'], predicate: query => !['api', 'settings'].includes(String(query.queryKey[1])) });
 }

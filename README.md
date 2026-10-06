@@ -4,7 +4,7 @@
 
 Track local AI agent usage on Windows and macOS.
 
-[![Desktop packages](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml/badge.svg)](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml) [![Version](https://img.shields.io/badge/version-0.0.6-75d9c4)](docs/ci-validation/0.0.6-language-switch.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Desktop packages](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml/badge.svg)](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml) [![Version](https://img.shields.io/badge/version-0.0.7-75d9c4)](docs/ci-validation/auto-full-scan-v1.md) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Windows x64 · macOS Apple Silicon ARM64 · 本地存储 · 默认离线采集**
 
@@ -26,8 +26,11 @@ Track local AI agent usage on Windows and macOS.
 | 导出 | 导出 JSON 完整历史归档或当前筛选范围的 CSV 报表 |
 | 语言与显示设置 | 默认中文，可切换英文并保存偏好；深色、浅色、跟随系统主题 |
 | 统计设置 | 来源开关与统计时区持久化 |
+| 自动完整扫描（当前源码） | 默认关闭；1/5/15 分钟检查、来源变化监听、休眠恢复检查与后台视图更新 |
 
 **0.0.6 更新：** 默认中文界面，右上角语言图标可切换英文并保存偏好。页面、筛选、状态和图表文字统一切换，保留当前筛选与图表状态。Windows/macOS 构建、原生测试和安装验证已通过。[更新与构建记录](docs/ci-validation/0.0.6-language-switch.md)
+
+0.0.7 新增自动完整扫描第一版（API 1.2 / profile v4）。前端与本地合成检查已通过；本次 CI 原生验证与打包结果在记录中更新，真实硬件休眠/GUI 验收仍待完成。既有 0.0.6 安装包不包含本次功能。[设计与验证记录](docs/ci-validation/auto-full-scan-v1.md)
 
 0.0.5 已修复本地统计日期：新配置采用系统时区，旧 UTC 默认配置升级时自动迁移并重新扫描。[已验证的 0.0.5 构建](docs/ci-validation/0.0.5-local-time.md)
 
@@ -66,7 +69,11 @@ Windows 包当前未签名；macOS 使用 ad-hoc 签名，尚未完成 Developer
 
 右上角主题按钮旁的语言图标可在中文和英文之间切换。首次使用默认中文，语言偏好保存在当前浏览器或桌面 WebView 中；切换语言会保留当前页面、筛选和图表状态。
 
-日常采集目前通过手动完整扫描触发。**刷新视图**重新读取缓存中的统计；采集新产生的用量请点击来源卡片上的 **扫描来源**。扫描失败时保留上次成功结果并提示状态。
+日常采集可以手动触发，或在 **设置 → 自动采集** 中开启自动完整扫描。默认关闭，间隔可选 1、5、15 分钟（默认 5），保存后重启保留。启用/启动时先完整扫描一次，之后定时检查已启用来源，有变化时再次完整扫描；扫描结束自动更新来源、图表与会话，无需点击“刷新视图”。手动 **扫描来源** 仍可用。**刷新视图**只重新读取已有统计。
+
+最小化时继续检查，退出应用后停止；休眠恢复合并为一次检查，不补跑错过的每个周期。关闭自动采集会清除待执行请求并取消尚未提交的自动任务，已提交结果和手动任务保留。自动任务也可单独取消，取消后等下一轮检查；失败保留历史并退避重试。来源关闭停止其自动检查并保留历史；来源目录/时区变更仅在没有活动扫描时保存，随后重建相应自动范围。间隔改变影响后续调度，语言切换不改变配置或触发扫描。
+
+Changes trigger the existing **full scan**, not incremental accumulation. Automatic collection is off by default, runs only while the app is open, and retains successful history on failure or cancellation. Enable it in Settings and choose a 1, 5 or 15 minute interval.
 
 安装版与便携版共享系统用户应用数据目录中的配置和历史。升级前先退出旧程序；使用便携包时请完整解压，保留同目录的 `ccusage.exe` 和许可文件。
 
@@ -210,7 +217,8 @@ cargo test -p usage-core -p usage-contracts -p usage-adapters --locked
 
 当前重点是把已实现的本地统计闭环补齐真实桌面与安装场景验收。后续功能包括：
 
-- [ ] 定时扫描、日志监听与增量采集
+- [ ] 自动完整扫描的两平台原生、休眠和安装验收（本地实现已完成）
+- [ ] 真正增量采集（游标、事件级去重与累加另行设计）
 - [ ] 数据备份、恢复、清除和应用数据目录迁移
 - [ ] JSON 归档导入、去重、多设备管理与独立数据集切换
 - [ ] 系统时区变更自动跟随

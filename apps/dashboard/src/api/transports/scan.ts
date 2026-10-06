@@ -2,7 +2,7 @@ import type { ScanSummary } from '../generated/usage';
 import { apiError } from '../protocol';
 
 export const isActiveScan = (scan: ScanSummary) => scan.state === 'queued' || scan.state === 'running';
-export const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+export const delay = (ms: number) => ms <= 0 ? Promise.resolve() : new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /** getScan is a long poll in both clients. Timers and IPC polling stay in transports.
  * The UI shows a pending scan while awaiting the terminal, unchanged wire DTO.

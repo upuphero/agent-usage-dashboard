@@ -50,6 +50,22 @@ pub struct DesktopProfile {
     pub claude_directory_ref: Option<String>,
     #[serde(default)]
     pub additional_providers: BTreeMap<String, ProviderProfile>,
+    #[serde(default)]
+    pub auto_collection: AutoCollectionProfile,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AutoCollectionProfile {
+    pub enabled: bool,
+    pub interval_minutes: u32,
+}
+impl Default for AutoCollectionProfile {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_minutes: 5,
+        }
+    }
 }
 fn initial_revision() -> u64 {
     1
@@ -63,7 +79,7 @@ fn system_timezone() -> String {
 impl DesktopProfile {
     fn fresh() -> Self {
         Self {
-            profile_version: 3,
+            profile_version: 4,
             device_id: uuid::Uuid::new_v4().to_string(),
             claude_dataset_id: uuid::Uuid::new_v4().to_string(),
             claude_enabled: false,
@@ -76,13 +92,17 @@ impl DesktopProfile {
                 .iter()
                 .map(|id| ((*id).into(), ProviderProfile::fresh()))
                 .collect(),
+            auto_collection: AutoCollectionProfile::default(),
         }
     }
     fn validate(&self) -> Result<(), CoreError> {
-        if self.profile_version > 3 {
+        if self.profile_version > 4 {
             return Err(CoreError::StorageSchemaNewer);
         }
-        if !matches!(self.profile_version, 1..=3) || self.settings_revision == 0 {
+        if !matches!(self.profile_version, 1..=4)
+            || self.settings_revision == 0
+            || !matches!(self.auto_collection.interval_minutes, 1 | 5 | 15)
+        {
             return Err(CoreError::InvalidData);
         }
         for id in [&self.device_id, &self.claude_dataset_id] {
@@ -131,8 +151,12 @@ impl DesktopProfile {
         Ok(())
     }
     fn migrate(&mut self, local_timezone: &str) -> Result<bool, CoreError> {
-        if self.profile_version >= 3 {
+        if self.profile_version >= 4 {
             return Ok(false);
+        }
+        if self.profile_version == 3 {
+            self.profile_version = 4;
+            return Ok(true);
         }
         if self.profile_version == 1 {
             for id in &PROVIDERS[1..] {
@@ -152,7 +176,7 @@ impl DesktopProfile {
                 .ok_or(CoreError::Overflow)?;
             self.timezone_needs_rescan = true;
         }
-        self.profile_version = 3;
+        self.profile_version = 4;
         Ok(true)
     }
     fn read(path: &Path) -> Result<Self, CoreError> {
@@ -316,6 +340,23 @@ fn replace_profile(from: &Path, to: &Path) -> Result<(), CoreError> {
 mod tests {
     use super::*;
     #[test]
+    fn version_three_gains_disabled_auto_defaults_without_timezone_or_identity_changes() {
+        let original = DesktopProfile::fresh();
+        let mut legacy = serde_json::to_value(&original).unwrap();
+        legacy["profileVersion"] = 3.into();
+        legacy.as_object_mut().unwrap().remove("autoCollection");
+        let mut read: DesktopProfile = serde_json::from_value(legacy).unwrap();
+        assert!(!read.auto_collection.enabled);
+        assert_eq!(read.auto_collection.interval_minutes, 5);
+        let timezone = read.timezone.clone();
+        read.migrate("Asia/Shanghai").unwrap();
+        assert_eq!(read.profile_version, 4);
+        assert_eq!(read.timezone, timezone);
+        assert_eq!(read.device_id, original.device_id);
+        assert_eq!(read.claude_dataset_id, original.claude_dataset_id);
+        assert_eq!(read.settings_revision, original.settings_revision);
+    }
+    #[test]
     fn identities_survive_restart_and_configuration_edits() {
         let dir = tempfile::tempdir().unwrap();
         let first = DesktopProfile::load_or_create(dir.path()).unwrap();
@@ -338,7 +379,7 @@ mod tests {
     fn newer_or_corrupt_profiles_are_never_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let mut profile = DesktopProfile::load_or_create(dir.path()).unwrap();
-        profile.profile_version = 4;
+        profile.profile_version = 5;
         let bytes = serde_json::to_vec(&profile).unwrap();
         fs::write(dir.path().join("profile.json"), &bytes).unwrap();
         assert!(matches!(

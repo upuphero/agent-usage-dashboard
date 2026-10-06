@@ -1,6 +1,6 @@
 # 接口基线
 
-状态：**接口基线已就绪，三来源与多 Provider Settings 已集成**。本机 MSVC/SDK 仍按用户要求不安装。契约 **1.1.0**（兼容原 1.0 查询/扫描）；应用 **0.0.4**，Core 补齐已知零用量周期，模型分布支持 token/估算成本降序与未使用项折叠，接口和统计总计不变，Windows免安装ZIP继续提供。仅 Windows x64 / macOS Apple Silicon ARM64。最新验证见 [0.0.4 记录](../ci-validation/0.0.4-zero-periods-model-ranking.md)。
+状态：当前契约 **1.2.0** / profile v4 / 应用 **0.0.7**，兼容原 1.0/1.1 查询、扫描与设置请求。新增能力协商的自动完整扫描；用户已授权 CI 原生验证与出包，本机 MSVC/SDK 不安装。[本次设计与验证](../ci-validation/auto-full-scan-v1.md)。既有发布基线为 [0.0.6 / API 1.1 / profile v3](../ci-validation/0.0.6-language-switch.md)。
 
 ## 归属与交接
 
@@ -44,6 +44,13 @@
 - 更新传 `{expectedRevision,timezone,providers:[{providerId,enabled,directoryRef}]}`；null directoryRef 使用默认目录，当前或新选择的引用沿用对应目录。版本冲突返回 SETTINGS_CONFLICT；未知/过期引用返回 INVALID_DIRECTORY_REF。
 - 目录选择由宿主原生对话框完成，取消成功返回 directory=null；引用有效期 5 分钟并绑定 Provider，保存后持久化。三个来源开关默认关闭；“启用并扫描”明确启动采集。每个 Provider 有独立持久 dataset，迁移保持 device/已有 Claude 身份，不清空历史。
 - 扫描活动中返回 SCAN_BUSY，退出中返回 SHUTTING_DOWN；成功原子持久化后才替换运行期配置。时区改变不重新分桶旧快照。新增错误码集合也由 contracts 生成 ERROR_CODES，前端不再手写另一份列表。
+
+## API 1.2 自动完整扫描
+
+- 能力 `auto-full-scan`：`getAutoCollection()` 无参数，返回配置/revision/统计时区和仅已启用来源的状态（state/jobId/lastSuccessAt/nextCheckAt/watching/error）。时间为 UTC RFC3339，前端按统计时区和界面语言显示；不暴露原生路径/指纹。
+- `updateAutoCollection({expectedRevision,config:{enabled,intervalMinutes}})` 独立保存自动配置；默认关闭/5，合法间隔 1/5/15，共享 Settings revision，冲突返回 SETTINGS_CONFLICT，非法间隔 INVALID_QUERY。活动扫描中可写，不接受来源/目录/时区字段，不能绕过原设置门禁。
+- `AUTO_COLLECTION_EVENT` 载荷 AutoCollectionStatus；既有 `SCAN_EVENT` 载荷不变。UsageClient 的可选订阅统一处理事件、后备同步和恢复；订阅卸载释放监听/定时器。旧服务 UI 明确不可用且不发新请求。
+- 关闭自动采集仅取消调度器拥有的未提交任务并清除 pending，已提交结果保留。手动加入自动任务后关闭开关也不取消该任务。单独取消仍走既有 cancelScan(jobId)。三个 Adapter incremental 能力保持 false。
 
 ## 数据端必须遵循
 

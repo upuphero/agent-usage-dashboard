@@ -35,28 +35,17 @@ pub(crate) fn capture(
         let destination = snapshot._temporary.path().join(format!("source-{index}"));
         fs::create_dir(&destination).map_err(io_error)?;
         snapshot.roots.push(destination.clone());
-        let directories = match kind {
-            AgentKind::Codex => {
-                let found: Vec<_> = ["sessions", "archived_sessions"]
-                    .into_iter()
-                    .filter(|name| source.join(name).is_dir())
-                    .map(|name| (source.join(name), destination.join(name)))
-                    .collect();
-                if found.is_empty() {
-                    vec![(source.clone(), destination)]
-                } else {
-                    found
-                }
-            }
-            AgentKind::Antigravity => {
-                let directory = if source.join("conversations").is_dir() {
-                    source.join("conversations")
-                } else {
-                    source.clone()
+        let directories = crate::changes::directories(crate::changes::Layout::Agent(kind), source)
+            .into_iter()
+            .map(|input| {
+                let output = match kind {
+                    AgentKind::Codex if input == *source => destination.clone(),
+                    AgentKind::Codex => destination.join(input.file_name().unwrap()),
+                    AgentKind::Antigravity => destination.join("conversations"),
                 };
-                vec![(directory, destination.join("conversations"))]
-            }
-        };
+                (input, output)
+            })
+            .collect::<Vec<_>>();
         let mut queue: Vec<_> = directories.into_iter().map(|(a, b)| (a, b, 0)).collect();
         while let Some((source, destination, depth)) = queue.pop() {
             cancel.check()?;

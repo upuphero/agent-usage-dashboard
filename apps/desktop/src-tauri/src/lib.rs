@@ -5,6 +5,7 @@ mod export;
 mod mapping;
 mod profile;
 mod runtime;
+mod scheduler;
 mod settings;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -38,6 +39,12 @@ pub fn run() {
             );
             tauri::async_runtime::block_on(runtime.recover_interrupted_scans())?;
             tauri::async_runtime::block_on(runtime.rescan_changed_timezone())?;
+            let handle = app.handle().clone();
+            let scheduler = scheduler::Scheduler::new(Arc::new(move |status| {
+                let _ = handle.emit(usage_contracts::AUTO_COLLECTION_EVENT, status);
+            }));
+            let _ = runtime.scheduler.set(scheduler.clone());
+            tauri::async_runtime::block_on(scheduler.start(&runtime));
             app.manage(runtime);
             Ok(())
         })
@@ -52,7 +59,9 @@ pub fn run() {
             commands::export_usage,
             commands::get_settings,
             commands::update_settings,
-            commands::choose_provider_directory
+            commands::choose_provider_directory,
+            commands::get_auto_collection,
+            commands::update_auto_collection
         ])
         .build(tauri::generate_context!())
         .expect("desktop initialization failed");

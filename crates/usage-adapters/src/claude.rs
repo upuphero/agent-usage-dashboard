@@ -110,6 +110,43 @@ impl UsageSource for ClaudeCodeAdapter {
             Err(error) => Err(error),
         }
     }
+    async fn inspect(
+        &self,
+        request: CollectRequest,
+        cancellation: CancellationToken,
+    ) -> Result<SourceObservation, CoreError> {
+        if !request.config.enabled {
+            return Err(CoreError::ProviderDisabled);
+        }
+        let root = self.root(&request.config)?;
+        let dataset = self.dataset.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::changes::inspect(
+                crate::changes::Layout::Claude,
+                &[root],
+                &dataset,
+                &request.timezone,
+                &format!("{NORMALIZATION_VERSION}|{COLLECTOR_VERSION}"),
+                &cancellation,
+            )
+        })
+        .await
+        .map_err(|_| CoreError::CollectionFailed)?
+    }
+    fn watch(
+        &self,
+        config: &SourceConfig,
+        changed: ChangeCallback,
+    ) -> Result<Box<dyn SourceWatch>, CoreError> {
+        if !config.enabled {
+            return Err(CoreError::ProviderDisabled);
+        }
+        crate::changes::watch(
+            crate::changes::Layout::Claude,
+            vec![self.root(config)?],
+            changed,
+        )
+    }
     async fn collect(
         &self,
         request: CollectRequest,
@@ -476,7 +513,10 @@ async fn audit_async(
 }
 fn audit_source(root: &Path, cancellation: &CancellationToken) -> Result<SourceAudit, CoreError> {
     let mut audit = SourceAudit::default();
-    let mut directories = vec![(root.join("projects"), 0)];
+    let mut directories: Vec<_> = crate::changes::directories(crate::changes::Layout::Claude, root)
+        .into_iter()
+        .map(|p| (p, 0))
+        .collect();
     while let Some((directory, depth)) = directories.pop() {
         cancellation.check()?;
         if depth > 32 {

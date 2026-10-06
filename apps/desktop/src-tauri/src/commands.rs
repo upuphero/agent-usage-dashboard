@@ -22,6 +22,7 @@ pub fn get_api_info(state: State<'_, Arc<Runtime>>) -> api::ApiInfo {
             "settings-read".into(),
             "settings-write".into(),
             "source-directory-selection".into(),
+            "auto-full-scan".into(),
         ]);
     }
     api::ApiInfo {
@@ -29,6 +30,19 @@ pub fn get_api_info(state: State<'_, Arc<Runtime>>) -> api::ApiInfo {
         app_version: env!("CARGO_PKG_VERSION").into(),
         capabilities,
     }
+}
+#[tauri::command]
+pub async fn get_auto_collection(
+    state: State<'_, Arc<Runtime>>,
+) -> Result<api::AutoCollectionStatus, api::ApiError> {
+    state.get_auto_collection().await
+}
+#[tauri::command]
+pub async fn update_auto_collection(
+    state: State<'_, Arc<Runtime>>,
+    request: api::UpdateAutoCollectionRequest,
+) -> Result<api::AutoCollectionStatus, api::ApiError> {
+    state.update_auto_collection(request).await
 }
 #[tauri::command]
 pub async fn list_providers(

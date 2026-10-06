@@ -40,10 +40,33 @@ impl CancellationToken {
 pub trait Clock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
 }
+/// Opaque native metadata. Scope includes dataset, roots, zone and normalization version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceObservation {
+    pub scope: String,
+    pub fingerprint: String,
+}
+/// Dropping this handle stops observation. Events are hints, never parsed usage.
+pub trait SourceWatch: Send + Sync {}
+pub type ChangeCallback = Arc<dyn Fn() + Send + Sync>;
 #[async_trait]
 pub trait UsageSource: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
     async fn detect(&self, config: &SourceConfig) -> Result<Detection, CoreError>;
+    async fn inspect(
+        &self,
+        _request: CollectRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<SourceObservation, CoreError> {
+        Err(CoreError::UnsupportedFilter)
+    }
+    fn watch(
+        &self,
+        _config: &SourceConfig,
+        _changed: ChangeCallback,
+    ) -> Result<Box<dyn SourceWatch>, CoreError> {
+        Err(CoreError::UnsupportedFilter)
+    }
     async fn collect(
         &self,
         request: CollectRequest,
