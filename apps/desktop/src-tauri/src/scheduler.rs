@@ -40,6 +40,8 @@ pub struct Scheduler {
     stopping: AtomicBool,
     wake: Notify,
     task: Mutex<Option<JoinHandle<()>>>,
+    pulse: Mutex<Option<JoinHandle<()>>>,
+    resumed: AtomicBool,
     status: Mutex<Option<api::AutoCollectionStatus>>,
     emit: Emitter,
     reset: AtomicBool,
@@ -51,6 +53,8 @@ impl Scheduler {
             stopping: AtomicBool::new(false),
             wake: Notify::new(),
             task: Mutex::new(None),
+            pulse: Mutex::new(None),
+            resumed: AtomicBool::new(false),
             status: Mutex::new(None),
             emit,
             reset: AtomicBool::new(false),
@@ -58,6 +62,10 @@ impl Scheduler {
         })
     }
     pub async fn start(self: &Arc<Self>, runtime: &Arc<Runtime>) {
+        let pulse = self.clone();
+        *self.pulse.lock().await = Some(tokio::spawn(async move {
+            pulse.watch_resumes().await;
+        }));
         let scheduler = self.clone();
         let runtime = Arc::downgrade(runtime);
         *self.task.lock().await = Some(tokio::spawn(async move {
@@ -86,6 +94,10 @@ impl Scheduler {
     }
     pub async fn stop(&self) {
         self.begin_stop();
+        if let Some(pulse) = self.pulse.lock().await.take() {
+            pulse.abort();
+            let _ = pulse.await;
+        }
         if let Some(mut task) = self.task.lock().await.take() {
             if tokio::time::timeout(Duration::from_secs(5), &mut task)
                 .await
@@ -98,6 +110,30 @@ impl Scheduler {
     }
     pub async fn status(&self) -> Option<api::AutoCollectionStatus> {
         self.status.lock().await.clone()
+    }
+    /// Independent pulse: source inspection can take seconds without impersonating sleep.
+    async fn watch_resumes(&self) {
+        let mut ticker = tokio::time::interval(Duration::from_secs(1));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut previous_mono = Instant::now();
+        let mut previous_wall = chrono::Utc::now();
+        loop {
+            ticker.tick().await;
+            if self.stopping.load(Ordering::Acquire) {
+                break;
+            }
+            let mono = Instant::now();
+            let wall = chrono::Utc::now();
+            if policy::resumed(
+                mono.duration_since(previous_mono).as_secs(),
+                (wall - previous_wall).num_seconds(),
+            ) {
+                self.resumed.store(true, Ordering::Release);
+                self.wake();
+            }
+            previous_mono = mono;
+            previous_wall = wall;
+        }
     }
     async fn publish(&self, status: api::AutoCollectionStatus) {
         let mut current = self.status.lock().await;
@@ -115,8 +151,6 @@ impl Scheduler {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
         let mut job: Option<Job> = None;
-        let mut last_mono = 0;
-        let mut last_wall = chrono::Utc::now();
         let mut previous_interval = 0;
         let mut epoch = 0;
         loop {
@@ -128,13 +162,7 @@ impl Scheduler {
                 break;
             };
             let now = origin.elapsed().as_secs();
-            let wall = chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp(), 0).unwrap();
-            let resumed = policy::resumed(
-                now.saturating_sub(last_mono),
-                (wall - last_wall).num_seconds(),
-            );
-            last_mono = now;
-            last_wall = wall;
+            let resumed = self.resumed.swap(false, Ordering::AcqRel);
             let Some((revision, timezone, config, configs)) = runtime.auto_context().await else {
                 continue;
             };
@@ -328,6 +356,7 @@ impl Scheduler {
                     }
                     Err(error) => Err(error),
                 };
+                let now = origin.elapsed().as_secs();
                 entry.policy.checked(now, interval);
                 match observation {
                     Err(error) => {
@@ -365,7 +394,10 @@ impl Scheduler {
                                     .await
                                 {
                                     Ok(Some(result)) => {
-                                        let generation = entry.policy.started(now);
+                                        // Round up the actual start acknowledgement, so even a slow
+                                        // metadata check/storage write cannot shorten the minimum gap.
+                                        let generation =
+                                            entry.policy.started(origin.elapsed().as_secs() + 1);
                                         entry.status.job_id = Some(result.job_id.clone());
                                         job = Some(Job {
                                             provider: provider.clone(),
@@ -398,6 +430,8 @@ impl Scheduler {
                     }
                 }
             }
+            let now = origin.elapsed().as_secs();
+            let wall = chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp(), 0).unwrap();
             let statuses: Vec<_> = entries
                 .values_mut()
                 .map(|entry| {
@@ -423,6 +457,7 @@ impl Scheduler {
         }
         // Drop watchers before Runtime cancels/reaps collection children.
         entries.clear();
+        self.stopping.store(true, Ordering::Release);
     }
     fn make_status(
         &self,

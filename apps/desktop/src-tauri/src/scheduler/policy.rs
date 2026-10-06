@@ -75,6 +75,17 @@ pub(super) fn resumed(monotonic_gap: u64, wall_gap: i64) -> bool {
 mod tests {
     use super::*;
     #[test]
+    fn slow_inspection_does_not_consume_the_minimum_scan_interval() {
+        let mut p = Policy::new(0);
+        p.checked(29, 60);
+        let generation = p.started(31);
+        p.succeeded("before".into(), generation);
+        p.request(32, true);
+        assert!(!p.scan_allowed(60, 60));
+        assert!(!p.scan_allowed(90, 60));
+        assert!(p.scan_allowed(91, 60));
+    }
+    #[test]
     fn bursts_first_enable_and_continuous_writes_are_bounded() {
         let mut p = Policy::new(0);
         p.next_check = 2;
