@@ -187,7 +187,9 @@ pub(crate) fn watch(
 ) -> Result<Box<dyn SourceWatch>, CoreError> {
     // FSEvents reports canonical paths (e.g. /private/var rather than /var).
     // Use the same paths for registration and filtering, including caller aliases.
-    let roots = roots.into_iter().map(|root| root.canonicalize().map_err(io_error))
+    let roots = roots
+        .into_iter()
+        .map(|root| root.canonicalize().map_err(io_error))
         .collect::<Result<Vec<_>, _>>()?;
     let filter = roots.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
