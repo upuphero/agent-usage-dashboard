@@ -36,28 +36,23 @@ Track local AI agent usage on Windows and macOS.
 
 ## 下载安装
 
-当前为 **早期测试版本**。已提供 Windows 安装包、Windows 便携包和 macOS ARM64 DMG；Intel Mac、Linux 桌面及 Windows ARM64 暂不提供安装包。
+[开发构建 / Daily build](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml) — `main` 分支的代码或构建配置更新后自动构建，适合试用最新功能。选择最新一次 **成功完成** 的运行，在底部 **Artifacts** 下载 `desktop-installers-<commit-sha>`；解压后包含两平台安装包、`SHA256SUMS` 和构建验证信息。
 
-### 获取测试包
+[版本化发布 / Versioned releases](https://github.com/upuphero/agent-usage-dashboard/releases) — 带版本号的发布入口，供需要固定版本的用户使用。**目前仅有 `v0.0.1` 源码预览，尚未发布版本化安装包**；当前测试安装包请从上面的开发构建下载。
 
-1. 登录 GitHub，打开 [Desktop packages 构建列表](https://github.com/upuphero/agent-usage-dashboard/actions/workflows/package.yml)。
-2. 选择最新一次 **成功完成** 的构建。
-3. 在页面底部的 **Artifacts** 中下载 `desktop-installers-<commit-sha>`。
-4. 解压后，根据系统选择安装包；其中同时包含 `SHA256SUMS`、大小报告与构建验证信息。
+> **下载开发构建：** 需要登录 GitHub，Artifacts 仅保留 **1 天**。过期后需等待新的成功构建或从源码构建；当前流水线不会自动创建 Release。[下载说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
 
-| 系统 | 文件名格式 | 使用方式 |
-| --- | --- | --- |
-| Windows x64 | `Agent Usage Dashboard_<version>_x64-setup.exe` | 运行 NSIS 安装程序 |
-| Windows x64 | `Agent Usage Dashboard_<version>_x64-portable.zip` | 完整解压后运行 `usage-desktop.exe` |
-| macOS Apple Silicon | `Agent Usage Dashboard_<version>_aarch64.dmg` | 打开 DMG，将应用复制到 Applications |
+> **从 0.0.6 升级：** 先退出旧程序。0.0.7 首次启动会自动升级本地配置格式，保留数据集身份、历史和已保存时区；自动采集默认关闭，可在设置中开启。升级配置后不建议降级到旧版本。[升级与验证记录](docs/ci-validation/auto-full-scan-v1.md)
 
-> Actions 下载需要登录 GitHub，产物仅保留 **1 天**，过期后需等待新的成功构建或从源码构建。[GitHub 下载说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
->
-> 当前 [Releases](https://github.com/upuphero/agent-usage-dashboard/releases) 中的 `v0.0.1` 是源码预览。较新的测试安装包在 Actions 中分发，工作流不会自动创建 Release。
+各平台提供的安装包：
 
-Windows 运行需要 **WebView2 Runtime**。NSIS 安装器包含下载引导，便携版依赖系统已安装的 WebView2。安装包已内置采集器，使用者无需另装 Node.js、Rust 或 ccusage。
+- **Windows x64 安装版** — `Agent Usage Dashboard_<version>_x64-setup.exe`，运行 NSIS 安装程序。
+- **Windows x64 便携版** — `Agent Usage Dashboard_<version>_x64-portable.zip`，完整解压后运行 `usage-desktop.exe`；保留同目录的 `ccusage.exe` 和许可文件。
+- **macOS Apple Silicon ARM64** — `Agent Usage Dashboard_<version>_aarch64.dmg`，打开 DMG，将应用复制到 Applications。
 
-Windows 包当前未签名；macOS 使用 ad-hoc 签名，尚未完成 Developer ID 签名与公证。真实 GUI 全流程、干净机安装、最低系统版本和用户数据升级场景仍待完整验收。[0.0.6 构建证据](docs/ci-validation/0.0.6-language-switch.md)
+安装包已内置采集器，无需另装 Node.js、Rust 或 ccusage。Windows 需要 **WebView2 Runtime**；安装版包含下载引导，便携版依赖系统已有的 WebView2。Intel Mac、Linux 桌面及 Windows ARM64 暂不提供安装包。
+
+当前仍为早期测试版本：Windows 未签名，macOS 使用 ad-hoc 签名，尚未完成 Developer ID 签名与公证。真实 GUI、硬件休眠、干净机、最低系统版本和用户数据升级场景仍待完整验收。[0.0.7 构建证据](docs/ci-validation/auto-full-scan-v1.md)
 
 ## 快速开始
 
