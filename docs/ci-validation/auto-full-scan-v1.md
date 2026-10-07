@@ -2,6 +2,8 @@
 
 日期：America/Phoenix 2026-10-05。基线应用 0.0.6；用户授权提交、推送及 CI 验证/出包后，新包版本升级为 0.0.7，API 1.2.0 / profile v4。遵循 [开发计划](../coordination/AUTO_FULL_SCAN_PLAN.md)。本次 CI 结果在运行完成后记录；既有版本的 CI 成功记录不能作为本次验证证据。
 
+最新验收：2026-10-07，两平台 CI、原生合成扫描、安装检查和集中出包全部通过，本地再次核对三份文件 SHA-256。真实 GUI、真实硬件休眠/恢复、最低 OS 和用户数据升级仍未完成；CI 不代替这些实际场景。
+
 ## 设计与边界
 
 - 配置：profile 的 `autoCollection` 保存 `enabled`、`intervalMinutes`；旧配置默认关闭/5 分钟，合法值只有 1/5/15。v1–v3 升至 v4，保留 deviceId、datasetId、历史、本地时区和 UTC 迁移标记。v3 的已保存 UTC 不再二次迁移。旧宿主拒绝 v4，避免降级覆盖配置。
@@ -37,7 +39,7 @@
 | Vitest | 12 个文件、67 项通过（原 57 + 自动 transport 7 + UI/cache 3） |
 | Node scripts | 10 项通过；生成器、command registry、既有构建/产物门槛 |
 | Adapter Node / SQL | 6 项通过 |
-| contracts / boundaries / version | 通过，应用版本仍为 0.0.6 |
+| contracts / boundaries / version | 本地初验通过；版本升级后的 0.0.7 检查也在最终 CI 通过 |
 | cargo fmt / diff whitespace | 通过 |
 | 生产前端 build | 通过（最终代码 tsc + Vite，103 modules，JS 332.22 kB / gzip 105.45 kB；不等于桌面安装包） |
 | 浏览器合成验收 | 默认关闭/5；1 和 15 保存；重新启用后后台任务出现；成功时间无需刷新更新；按 job ID 取消后任务消失；中英文切换保持已保存开关、1 分钟及 America/Phoenix |
@@ -46,9 +48,9 @@
 
 本机 pnpm fallback 与既有 node_modules 管理版本不一致，直接运行对应 package scripts 所用的现有二进制；未修改 npm 依赖或 lockfile。notify 8.2.0 通过 crates.io 下载并锁定，只增加其必要 Rust 依赖。
 
-## 未验证与两平台出口
+## 验证边界与两平台出口
 
-本机 `cargo test -p usage-core -p usage-contracts -p usage-adapters --locked --offline` 在 build script 阶段失败：**link.exe not found**。遵循计划未安装 MSVC/SDK。Rust 测试/clippy、host 编译、两平台 native fixture、新安装/升级包、本机真实 Tauri UI、真实硬件休眠均不能标成通过。
+本机 `cargo test -p usage-core -p usage-contracts -p usage-adapters --locked --offline` 在 build script 阶段失败：**link.exe not found**。遵循计划未安装 MSVC/SDK。Rust 测试/clippy、host 编译、两平台 native fixture 和 CI 安装检查现已由最终流水线验证通过；本机真实 Tauri UI、真实硬件休眠、干净机/最低 OS 和用户数据升级仍未验证。
 
 新增待 CI 运行的 Rust 检查：profile v3 默认/身份/时区保持；自动配置合法值/revision/持久化；Runtime 手动优先、自动开关独立门禁/取消归属；可控时间的去抖、连续写入限流、扫描中 dirty、失败/取消基线与恢复；三来源 metadata/历史修正/身份替换/WAL 和监听访问噪声过滤；原生合成文件监听/RAII 退出；实际锁定 sidecar 的自动 Scheduler 与手动完整快照一致性 fixture。元数据检查有 30 秒超时及协作取消，超时按失败保留基线/历史并退避。
 
@@ -62,4 +64,24 @@
 
 运行 [37419753551](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37419753551)，提交 `f663ee331f01ffa1153b20131c83aea1e247d8ea`：基础前端/Core/Adapter 验证通过；Windows 原生 unit、sidecar fixture、NSIS/portable 安装检查和 host clippy 全部通过。macOS 构建成功，但原生文件监听测试超时，因此没有生成集中安装包。
 
-已定位并修正监听路径别名问题：FSEvents 的事件路径经过规范化，而原过滤器可保留 `/var` 等别名，导致合法事件不匹配。监听注册与过滤现统一使用 canonical roots；同一原生测试在 Unix 显式使用目录别名，避免只修改 fixture 来绕过问题。修复后重新运行完整两平台流水线，最终结果与安装包校验在完成后补充。
+已定位并修正监听路径别名问题：FSEvents 的事件路径经过规范化，而原过滤器可保留 `/var` 等别名，导致合法事件不匹配。监听注册与过滤现统一使用 canonical roots；同一原生测试在 Unix 显式使用目录别名，避免只修改 fixture 来绕过问题。
+
+最终 [run 37672597908](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37672597908) 的五个 jobs 全部成功；安装包代码提交 **465ac24ef7e99d5e465d5e9b495ce9d5672084b0**，应用 **0.0.7**。成果包括：
+
+| 项目 | 实际结果 |
+| --- | --- |
+| 前端 / Node | 67 前端 tests、10 scripts tests、6 Adapter Node/SQL tests，typecheck/lint/build、契约/边界/版本均通过 |
+| Linux Rust | 43 默认 tests 与严格 clippy 通过 |
+| Windows x64 / macOS ARM64 | 各 75 默认 tests、5 native sidecar/host fixture 通过；安装后再运行 5 fixture 均通过；host 严格 clippy 通过 |
+| 新功能回归 | 两平台原生别名监听、WAL/身份/历史修正检查、配置迁移与取消门禁、可控调度政策通过；实际 Scheduler 的自动结果与手动完整扫描一致性 fixture 两平台均通过，安装后再次通过 |
+| 安装 / 集中产物 | Windows NSIS 实际安装、portable ZIP 实际解压、macOS ARM64 DMG 挂载复制，安装位置架构、锁定 sidecar 原始 SHA 和 fixture 验证通过；collect 成功生成集中产物 |
+
+集中 artifact：`desktop-installers-465ac24ef7e99d5e465d5e9b495ce9d5672084b0`，GitHub 保留一天。本地已下载到 `artifacts/ci-0.0.7-watcher-fix/packages/` 并使用既有 `collect-release-artifacts.mjs` 再次验证提交、版本、target、安装证据与原始 sidecar 锁；重新计算的安装包 SHA/大小与 CI `size-report.json` 完全一致。
+
+| 安装包 | 大小 | SHA-256 |
+| --- | ---: | --- |
+| `Agent Usage Dashboard_0.0.7_x64-setup.exe` | 4,307,092 bytes / 4.11 MiB | `904e8badf39395a9c03d0c71c6d53f09657572e405d0ab5a22ca3a1ab9843b1a` |
+| `Agent Usage Dashboard_0.0.7_x64-portable.zip` | 5,931,465 bytes / 5.66 MiB | `09e7267b8c5c36fe56b1855be9eb09184a21ca79ad77c34b05c2f3e37f09a389` |
+| `Agent Usage Dashboard_0.0.7_aarch64.dmg` | 5,363,013 bytes / 5.11 MiB | `84f78c11925f6f90c15bc3bd0d09f305c492d77b5c303e636956f7dba7f1fe70` |
+
+Windows 仍未签名；macOS 仍为 ad-hoc，未新增 Developer ID/公证。旧 tag/Release、签名凭据、CI 工作流保持不变。完整真实 GUI、睡眠、干净机、升级/最低 OS 验收沿用上述未验证清单；不能将 synthetic fixture 结果当成实际硬件睡眠通过。

@@ -844,3 +844,5 @@ fixture 采用最小合成数据或经过检查的脱敏数据，保留必要 us
 基于应用 0.0.6 实现默认关闭的自动采集、1/5/15 分钟（默认 5）、Adapter metadata/WAL/原生监听、Rust 串行统一调度/合并/休眠恢复/取消/退避和前端后台刷新。保留本地时区、中英文、token/价格/数据集身份与完整快照替换；三个 incremental 能力仍为 false。契约升级至 1.2，profile v4 保留旧身份/历史，自动开关使用独立 revision 校验接口，不绕过来源/时区写入门禁。
 
 本地 67 项前端、16 项 Node/SQL、typecheck/lint/build、契约/边界/版本/格式检查和浏览器合成验收通过。本机 link.exe 缺失，未安装 MSVC/SDK；本次 Rust/clippy、两平台原生 fixture、真实休眠/安装与新包均待验证。未提交、推送或运行远程 CI；需本次用户另外确认。[具体设计、行为与验收出口](docs/ci-validation/auto-full-scan-v1.md)。
+
+2026-10-07 续验：用户已授权提交/推送、CI 验证与生成安装包。应用升级为 0.0.7；最终代码 465ac24ef7e99d5e465d5e9b495ce9d5672084b0 / run 37672597908 五个 jobs 全部成功。修复 macOS 原生监听目录别名匹配，67 前端、16 Node/SQL、43 Linux Rust、两平台各 75 默认和 5 native tests、安装后重复 5 native、严格 clippy、Windows NSIS/ZIP 与 Mac ARM64 DMG 安装/解压全部通过，三份安装包已下载并本地重算 SHA。真实 GUI、硬件休眠、升级/干净机/最低 OS 仍未验证；旧 tag/Release 与签名凭据未改。[最终证据与 SHA](docs/ci-validation/auto-full-scan-v1.md)。

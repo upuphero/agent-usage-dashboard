@@ -30,7 +30,7 @@ Track local AI agent usage on Windows and macOS.
 
 **0.0.6 更新：** 默认中文界面，右上角语言图标可切换英文并保存偏好。页面、筛选、状态和图表文字统一切换，保留当前筛选与图表状态。Windows/macOS 构建、原生测试和安装验证已通过。[更新与构建记录](docs/ci-validation/0.0.6-language-switch.md)
 
-0.0.7 新增自动完整扫描第一版（API 1.2 / profile v4）。前端与本地合成检查已通过；本次 CI 原生验证与打包结果在记录中更新，真实硬件休眠/GUI 验收仍待完成。既有 0.0.6 安装包不包含本次功能。[设计与验证记录](docs/ci-validation/auto-full-scan-v1.md)
+**0.0.7 更新：** 自动完整扫描第一版（API 1.2 / profile v4）已通过 Windows x64 / macOS ARM64 CI 原生测试、安装检查和出包。本机已下载并核对三份安装包 SHA-256；真实硬件休眠/GUI 等场景仍待验收。既有 0.0.6 安装包不包含本次功能。[构建与下载](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37672597908) · [设计与验证记录](docs/ci-validation/auto-full-scan-v1.md)
 
 0.0.5 已修复本地统计日期：新配置采用系统时区，旧 UTC 默认配置升级时自动迁移并重新扫描。[已验证的 0.0.5 构建](docs/ci-validation/0.0.5-local-time.md)
 

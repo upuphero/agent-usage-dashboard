@@ -6,7 +6,7 @@
 
 | 优先级 | 工作 | 当前状态 / 具体出口 |
 | --- | --- | --- |
-| P1 | 自动完整扫描第一版 | 本地实现已完成：默认关闭、1/5/15、metadata/WAL/原生监听、Rust 串行调度与合并/恢复/取消/退避、后台缓存更新。67 前端、16 Node/SQL、契约/边界/版本/格式检查通过；新增 Rust/fixture、真实两平台休眠及安装待验证。本机 link.exe 缺失，不安装 MSVC/SDK；提交、推送、远程 CI 出包需本次人类授权。[计划](AUTO_FULL_SCAN_PLAN.md) · [记录](../ci-validation/auto-full-scan-v1.md)。 |
+| P1 | 自动完整扫描第一版 | 0.0.7 已提交/推送并通过 run 37672597908：67 前端、16 Node/SQL、43 Linux Rust、两平台各 75 默认 + 5 native + 安装后重复 5 native tests、严格 clippy、安装/解压和集中出包。修复了 macOS 目录别名监听过滤问题，三份安装包已本地复核 SHA。本机不安装 MSVC/SDK；真实 GUI/硬件休眠、干净机/升级/最低 OS 仍待验收。[计划](AUTO_FULL_SCAN_PLAN.md) · [记录](../ci-validation/auto-full-scan-v1.md)。 |
 | P0 | Settings 读写与目录选择 | 功能已实现；当前 57 项前端 tests、两平台 Settings revision/身份保持/原子持久化及中文/英文窗口标题 tests 已通过。真实原生选择器与完整 UI/IPC 操作仍待验收。 |
 | P0 | 真实 UI/IPC 闭环 | 本机 MSVC/SDK 不安装；远程两平台 Rust tests、clippy、native backend 闭环已通过。仍需实际启动 Tauri，从 UI 启用→选择目录→扫描→查缓存→取消→退出→重启→导出，确认 UI 与真实 IPC 配合。native DTO 测试不代替 UI 验收。 |
 | P0 | 正式签名与分发 | 当前 Windows 未签名、Mac ad-hoc，无 Developer ID/公证。macOS.files 原样保留上游 sidecar 的签名/原始 SHA，真实 DMG 安装后 hash、嵌套签名结构及运行已经通过。未来若正式重签 sidecar，需另行设计可信身份，不绕过原锁；凭据和正式发布另行确认。 |

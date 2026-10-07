@@ -1,6 +1,6 @@
 # 接口基线
 
-状态：当前契约 **1.2.0** / profile v4 / 应用 **0.0.7**，兼容原 1.0/1.1 查询、扫描与设置请求。新增能力协商的自动完整扫描；用户已授权 CI 原生验证与出包，本机 MSVC/SDK 不安装。[本次设计与验证](../ci-validation/auto-full-scan-v1.md)。既有发布基线为 [0.0.6 / API 1.1 / profile v3](../ci-validation/0.0.6-language-switch.md)。
+状态：当前契约 **1.2.0** / profile v4 / 应用 **0.0.7**，兼容原 1.0/1.1 查询、扫描与设置请求。自动完整扫描已通过 run 37672597908 两平台原生、fixture、安装与出包验证，本机不安装 MSVC/SDK。[本次设计与验证](../ci-validation/auto-full-scan-v1.md)。既有 [0.0.6 / API 1.1 / profile v3 记录](../ci-validation/0.0.6-language-switch.md)保留；真实 GUI/硬件休眠及升级场景仍待验收。
 
 ## 归属与交接
 
