@@ -2,7 +2,9 @@
 
 仓库必须保持 public。只用免费标准 GitHub-hosted runner：
 
-最新 0.0.3：[Actions run 37261635910](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37261635910)，commit `3e6cb88b2e75fe2e99aff07c5debd0ce3fa65066`，集中 artifact `desktop-installers-3e6cb88b2e75fe2e99aff07c5debd0ce3fa65066`。Windows 免安装 ZIP/NSIS、Mac ARM64 DMG 全部通过，本地重新校验三份文件 SHA。[证据与使用](ci-validation/0.0.3-chart-readability.md)。旧验收记录保留，不修改既有 tag/Release。
+最新验证（2026-10-07）：应用 **0.0.7 / API 1.2.0 / profile v4**；[Actions run 37672597908](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37672597908)，代码 commit `465ac24ef7e99d5e465d5e9b495ce9d5672084b0`，集中 artifact `desktop-installers-465ac24ef7e99d5e465d5e9b495ce9d5672084b0`。67 前端、16 Node/SQL、43 Linux Rust、两平台各 75 默认 + 5 native + 安装后重复 5 native tests、严格 clippy 全部通过；NSIS/ZIP/DMG 本地再次校验 SHA。[最终证据与使用](ci-validation/auto-full-scan-v1.md)。后续纯文档提交不改变包内代码 commit；旧验收记录、tag/Release 保留。
+
+当前没有安装包 Release 发布 job：只上传一天 Actions artifacts。README 的 Daily build 指开发构建入口；长期滚动开发附件和固定版本发布是 [T4 待办](coordination/TODO_GUIDE.md#t4)。正式签名/公证、完整 notices 是 [T5–T6 待办](coordination/TODO_GUIDE.md#t5)，不能把已有构建步骤当成这些功能已完成。
 
 | 工作 | runner | Rust target | 安装器 |
 | --- | --- | --- | --- |

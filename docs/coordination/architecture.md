@@ -1,5 +1,42 @@
 # 主 agent 架构与集成交付
 
+## 当前架构与交付状态（2026-10-07）
+
+应用 **0.0.7 / API 1.2.0 / profile v4**。三来源、完整快照/SQLite、设置与导出、本地时区/中文英文、自动完整扫描及后台 UI 刷新均已实现；两平台原生、安装与出包验证通过。[最终证据](../ci-validation/auto-full-scan-v1.md) · [剩余工作](REMAINING_WORK.md) · [TODO 含义](TODO_GUIDE.md)
+
+| 层 | 当前职责 |
+| --- | --- |
+| Dashboard / UsageClient | 页面与显示偏好、能力协商、查询缓存、设置/自动任务操作；Tauri SDK、事件订阅/卸载与 15 秒后备同步只在 transport |
+| usage-contracts | API 1.2 DTO、命令/事件和 TypeScript 生成的唯一来源；自动配置单独写入，共享 revision，旧服务不收到新参数 |
+| usage-core | 统计、完整快照权威/校验/提交与取消边界；新增 inspect/watch 端口，不实现真实文件、SQLite 或进程 IO |
+| usage-adapters | 原有三来源目录解析/白名单输入、metadata/身份/WAL 检查、规范化监听根、完整采集器、取消/超时/回收和 SQLite |
+| Tauri Runtime / Scheduler | 来源活动互斥、手动优先/任务合并；自动全局公平串行，单来源一个 pending、去抖/限流/退避、成功前指纹基线；独立恢复 pulse 与退出清理 |
+| profile / composition | 原子身份/设置持久化、v1–v3→v4 兼容迁移、系统时区默认、固定原生 sidecar 的实际注入与单实例 |
+
+```mermaid
+flowchart LR
+  UI[Dashboard] --> Client[UsageClient]
+  Client --> Host[Tauri commands / Runtime]
+  Trigger[间隔 / 文件提示 / 恢复 / 配置] --> Scheduler[Rust Scheduler]
+  Scheduler --> Inspect[Core inspect/watch 端口]
+  Inspect --> IO[Adapter 原生 IO]
+  Scheduler --> Host
+  Host --> Core[UsageService 完整扫描]
+  Core --> IO
+  Core --> DB[Repository / SQLite]
+  Host --> Events[扫描 / 自动状态事件]
+  Scheduler --> Events
+  Events --> Client
+```
+
+新增 inspect/watch 不改变 token、价格、dataset/device 身份或完整快照替换规则；文件事件只提示检查，三个 incremental 能力仍为 false。自动配置扫描中可保存，但来源/时区配置继续受活动扫描门禁保护。
+
+当前证据：67 前端、16 Node/SQL、43 Linux Rust；两平台各 75 默认、5 native 和安装后重复 5 native，严格 clippy、NSIS/portable/DMG 均通过。真实 WebView UI、硬件睡眠、干净机/升级/最低 OS、正式发布/签名与完整 notices 仍是待办。
+
+## 初始集成历史（2026-10-04 起）
+
+以下记录保留当时的 API/测试数量/阻塞状态，不代表当前仍未编译或未集成。当前结论以上方摘要、REMAINING_WORK 和最终 0.0.7 证据为准。
+
 2026-10-04：读取开发计划 V0.2.2 和用户 AGENTS 指示；项目原先仅有计划。建立 Cargo/pnpm workspace、三个 crate、独立 Dashboard package、Tauri 2 宿主骨架。API 1.0.0 唯一来源 usage-contracts；接口位置、文件归属和任务分工见 CONTRACT_BASELINE.md。
 
 核心选择：规范化快照与 API DTO 分开；Core 仅依赖端口；标准 Daily/Session 分离；拒绝不完整 batch 的破坏性替换；token IPC 使用字符串；字段未知返回 null；ISO 周；查询不重分桶已聚合日期。平台仅 x86_64-pc-windows-msvc 和 aarch64-apple-darwin。

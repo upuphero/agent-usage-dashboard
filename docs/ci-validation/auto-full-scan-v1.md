@@ -52,7 +52,7 @@
 
 本机 `cargo test -p usage-core -p usage-contracts -p usage-adapters --locked --offline` 在 build script 阶段失败：**link.exe not found**。遵循计划未安装 MSVC/SDK。Rust 测试/clippy、host 编译、两平台 native fixture 和 CI 安装检查现已由最终流水线验证通过；本机真实 Tauri UI、真实硬件休眠、干净机/最低 OS 和用户数据升级仍未验证。
 
-新增待 CI 运行的 Rust 检查：profile v3 默认/身份/时区保持；自动配置合法值/revision/持久化；Runtime 手动优先、自动开关独立门禁/取消归属；可控时间的去抖、连续写入限流、扫描中 dirty、失败/取消基线与恢复；三来源 metadata/历史修正/身份替换/WAL 和监听访问噪声过滤；原生合成文件监听/RAII 退出；实际锁定 sidecar 的自动 Scheduler 与手动完整快照一致性 fixture。元数据检查有 30 秒超时及协作取消，超时按失败保留基线/历史并退避。
+最终 CI 已执行通过的 Rust 检查：profile v3 默认/身份/时区保持；自动配置合法值/revision/持久化；Runtime 手动优先、自动开关独立门禁/取消归属；可控时间的去抖、连续写入限流、扫描中 dirty、失败/取消基线与恢复；三来源 metadata/历史修正/身份替换/WAL 和监听访问噪声过滤；原生合成文件监听/RAII 退出；实际锁定 sidecar 的自动 Scheduler 与手动完整快照一致性 fixture。元数据检查有 30 秒超时及协作取消，超时按失败保留基线/历史并退避。[剩余真机/分发/功能 TODO](../coordination/REMAINING_WORK.md) · [TODO 含义](../coordination/TODO_GUIDE.md)
 
 本次用户已明确授权提交、推送并运行现有 Windows/macOS CI 验证和生成安装包。沿用 package.yml：Linux core/adapters unit + clippy；Windows x64 / macOS ARM64 host unit、ignored sidecar fixture、host clippy，NSIS/portable ZIP/DMG 安装后重复 fixture。未改旧 tag/Release、工作流或签名凭据。
 

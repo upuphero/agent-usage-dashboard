@@ -1,21 +1,49 @@
-# 剩余工作与验收顺序
+# 当前功能与剩余工作
 
-更新：2026-10-05。已发布基线应用 0.0.6 / API 1.1.0 / profile v3；自动完整扫描新包为应用 0.0.7 / API 1.2.0 / profile v4，用户已授权提交/推送与两平台 CI。仅 Windows x64、macOS Apple Silicon ARM64。保留三来源、本地时区与旧 UTC 迁移、零用量日期/模型排序和中文/英文切换。[既有发布证据](../ci-validation/0.0.6-language-switch.md) · [本次验证与未验证项](../ci-validation/auto-full-scan-v1.md)
+更新：2026-10-07，America/Phoenix。当前应用 **0.0.7 / API 1.2.0 / profile v4**，支持 Windows x64、macOS Apple Silicon ARM64。
 
-新增 Codex / Antigravity 与 Windows portable ZIP 已完成：[run 37258630412](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37258630412) 全部通过；本机便携包的新 Rust 后端已只读扫描真实两来源并 succeeded，私人结果未上传。profile v2 迁移保留旧身份、每来源独立 UUID，多 Provider 设置与“启用并扫描”、最近30天范围已落地。Antigravity .pb 未纳入、模型输出拆分不足时保持 unknown；完整真实 GUI 点击流程和真实 Mac 数据仍待验收。[0.0.2 证据与操作](../ci-validation/0.0.2-codex-antigravity.md)
+安装包代码：`465ac24ef7e99d5e465d5e9b495ce9d5672084b0`；[最终 CI 37672597908](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37672597908) 五个 jobs 全部成功。后续纯文档提交不改变这份安装包的代码身份。[验收证据与 SHA](../ci-validation/auto-full-scan-v1.md) · [TODO 详细含义与完成标准](TODO_GUIDE.md)
 
-| 优先级 | 工作 | 当前状态 / 具体出口 |
+## 已实现并通过相应验证
+
+| 项目 | 当前能力与证据边界 |
+| --- | --- |
+| 三个本地来源 | Claude Code、Codex sessions/archived_sessions、Antigravity 已支持的 SQLite .db；.pb 尚不支持，缺失字段保持不可用 |
+| 本地统计 | SQLite 完整 Daily/Session 快照、日/周/月趋势、来源/模型分布和排序、会话累计量与分页、覆盖范围/精度/stale 提示；token/价格口径未改 |
+| 来源与设置 | 启用/关闭、目录选择和不透明引用、revision 冲突校验、扫描期间来源/时区写入门禁、身份/历史保留；原生 GUI 选择器的人机操作仍需 T1 验收 |
+| 时区与语言 | 新配置使用系统本地时区，旧默认 UTC 按既有迁移规则重扫；中文默认、英文切换与显示偏好保留；尚未自动跟随后续系统时区变化 |
+| 手动扫描与导出 | 同来源合并、取消/失败保留历史、退出回收；JSON 完整历史归档及筛选 CSV；导入、用户备份/恢复/清除 UI 尚未实现 |
+| 自动完整扫描 v1 | 默认关闭，1/5/15 分钟（默认 5）、metadata/文件身份/WAL/原生监听、Rust 公平串行调度、合并/限流/退避、恢复检测、取消、后台事件与缓存刷新；仍是完整扫描，三个 incremental 能力均为 false |
+| 构建与安装检查 | NSIS、portable ZIP、ARM64 DMG 已生成；CI 实际安装/解压、包内 sidecar 原始 SHA/架构及 fixture 通过，三份下载包本地重算 SHA 通过 |
+| 验证数量 | 67 前端、16 Node/SQL、43 Linux Rust；两平台各 75 默认 + 5 native tests，安装后各再跑 5 native；typecheck/lint/build、契约/边界/版本和严格 clippy 均通过 |
+
+CI 证明的是代码、合成输入与受控 runner 场景；不能据此把真实 GUI、硬件休眠、干净机/用户数据升级或最低 OS 标为通过。
+
+## 剩余 TODO 与建议顺序
+
+P0 是当前测试包的真实使用验收，P1 是稳定分发准备，P2 是后续功能；不是必须一次全部完成，也不代表已排定发布日期。
+
+| 优先级 | ID / 工作 | 完成出口 |
 | --- | --- | --- |
-| P1 | 自动完整扫描第一版 | 0.0.7 已提交/推送并通过 run 37672597908：67 前端、16 Node/SQL、43 Linux Rust、两平台各 75 默认 + 5 native + 安装后重复 5 native tests、严格 clippy、安装/解压和集中出包。修复了 macOS 目录别名监听过滤问题，三份安装包已本地复核 SHA。本机不安装 MSVC/SDK；真实 GUI/硬件休眠、干净机/升级/最低 OS 仍待验收。[计划](AUTO_FULL_SCAN_PLAN.md) · [记录](../ci-validation/auto-full-scan-v1.md)。 |
-| P0 | Settings 读写与目录选择 | 功能已实现；当前 57 项前端 tests、两平台 Settings revision/身份保持/原子持久化及中文/英文窗口标题 tests 已通过。真实原生选择器与完整 UI/IPC 操作仍待验收。 |
-| P0 | 真实 UI/IPC 闭环 | 本机 MSVC/SDK 不安装；远程两平台 Rust tests、clippy、native backend 闭环已通过。仍需实际启动 Tauri，从 UI 启用→选择目录→扫描→查缓存→取消→退出→重启→导出，确认 UI 与真实 IPC 配合。native DTO 测试不代替 UI 验收。 |
-| P0 | 正式签名与分发 | 当前 Windows 未签名、Mac ad-hoc，无 Developer ID/公证。macOS.files 原样保留上游 sidecar 的签名/原始 SHA，真实 DMG 安装后 hash、嵌套签名结构及运行已经通过。未来若正式重签 sidecar，需另行设计可信身份，不绕过原锁；凭据和正式发布另行确认。 |
-| P1 | Windows 剩余安装场景 | NSIS 在 windows-2022 实际安装、中文/空格路径、主程序/sidecar 架构和原始 hash、安装后 fixture/native tests 已通过。真实 UI、干净机器无额外 runtime、WebView2 缺失、升级 DB 保留和最低 OS 尚未验证。 |
-| P1 | macOS 剩余安装场景 | macos-15 ARM64 已实际执行 CLI/runner、构建 app/DMG、挂载复制、权限/嵌套签名/原始 hash 和安装后 native tests。真实 WKWebView UI、下载后的 Gatekeeper、公证、最低 OS 和升级仍待验证；Intel/universal 不在范围。 |
-| P1 | 完整许可与构建材料 | ccusage MIT 已随资源打包；commit/工具链/runner image/版本/主程序和 sidecar/安装器大小与 SHA 已在集中 artifact 和持久验收记录。完整 Rust/npm/native transitive notices 库存仍待补。 |
-| 完成 | 免费 CI 和集中资产门槛 | 最新 run 37379693946 五 jobs 全部通过；57 前端、Node/SQL、39 Linux Rust、两平台各 63 默认 + 4 native + 安装/解压后重复 4 native tests、strict clippy、实际安装校验及集中 SHA256SUMS 已完成。本地再次校验 ZIP/NSIS/DMG 三份 hash。标准 public runner、无 cache、artifact 一天，不自动发布 Release。 |
-| P2 | 用户交互与诊断扩展 | 当前设置已支持基础项；数据目录备份/清除、采集版本元数据、精细扫描订阅仍未开放。分别定义接口和验证，不混入统计实现。 |
+| P0 | [T1 真机桌面 UI/IPC](TODO_GUIDE.md#t1) | 两平台实际点击完成启用→选目录→扫描→图表/会话更新→取消→退出/重启→导出；中英文一致，并记录系统与包 SHA |
+| P0 | [T2 自动扫描真机场景](TODO_GUIDE.md#t2) | 最小化、真实睡眠跨多个周期、持续写入/WAL、关闭/取消/退出；不补跑错过周期、不丢新变化、不残留进程 |
+| P0 | [T3 安装、升级与兼容](TODO_GUIDE.md#t3) | 干净机/WebView2 缺失、0.0.6→0.0.7 配置/身份/历史保持、安装/便携共享、macOS 下载隔离属性和最低 OS 场景通过 |
+| P1 | [T4 长期下载与版本发布](TODO_GUIDE.md#t4) | 滚动开发渠道与固定版本附件、精确提交/校验材料、失败不覆盖好包；目前只有一天 Actions artifacts 与 v0.0.1 源码预览 Release |
+| P1 | [T5 正式签名/公证](TODO_GUIDE.md#t5) | Windows 发布者签名/时间戳、macOS Developer ID/公证、sidecar 信任方案及实际下载验证；账号/证书/凭据操作单独授权 |
+| P1 | [T6 完整第三方许可](TODO_GUIDE.md#t6) | 对随包分发的 Rust/npm/native 依赖生成并人工核对 notices；当前只完成 ccusage 完整 MIT 与基础声明 |
+| P2 | [T7 真正增量采集](TODO_GUIDE.md#t7) | 按来源设计游标/稳定身份、修正/轮转/截断处理、事务与全量复核；不能直接把变化文件再累加 |
+| P2 | [T8 数据维护](TODO_GUIDE.md#t8) | 用户可备份、恢复、清除与迁移应用数据；有预览、版本/身份校验和失败恢复；底层 SQLite 备份测试不等于用户功能完成 |
+| P2 | [T9 归档导入/多设备/独立数据集](TODO_GUIDE.md#t9) | 严格校验归档、重复导入幂等、revision/来源冲突与重叠提示；明确数据集切换，不按设备名简单求和 |
+| P2 | [T10 系统时区跟随](TODO_GUIDE.md#t10) | 可选“固定/跟随系统”模式，时区变化后安全重扫；不能把现有 Daily 总量直接重新分桶 |
+| P2 | [T11 自定义日期/项目统计](TODO_GUIDE.md#t11) | UI 日期选择、日期边界/分页/导出一致；有可信项目元数据与 unknown 状态，再增加项目维度 |
+| P2 | [T12 托盘/开机启动/通知/更新](TODO_GUIDE.md#t12) | 分别定义生命周期、独立开关和平台验证；更新还需独立签名、版本/迁移/失败恢复 |
+| P2 | [T13 Antigravity .pb](TODO_GUIDE.md#t13) | 主 conversation .pb 的版本化 usage schema、fixture、隐私边界及平台验证；现有附属 metadata protobuf 过滤不等于 .pb 来源支持 |
+| P2 | [T14 订阅额度](TODO_GUIDE.md#t14) | 可信账户级来源、含义/重置时区/更新时间与 unknown 状态；不从 token/API 等价成本推导剩余额度 |
+| P2 | [T15 更多来源](TODO_GUIDE.md#t15) | ChatGPT Web、DeepSeek Harness、Cowork 等逐个核实数据、授权范围和统计口径，再提供独立 Adapter/fixture/开关 |
+| P2 | [T16 诊断展示扩展](TODO_GUIDE.md#t16) | 展示可信采集/归一化版本与更细的处理进度；已有 scan/auto 状态订阅不重做，不虚构百分比或泄露原文/路径 |
 
-当前 0.0.6 源码提交为 7314cfe，已有成功验证的 Actions 测试包，旧 tag/Release 未变。用户曾分别授权既有版本提交、推送与 CI；新的功能发布应依据新会话明确授权。正式签名凭据和生产操作仍另行确认。未通过项目保持未验证；本文件不代表桌面软件已达到完整 Definition of Done。[最新持久验收记录](../ci-validation/0.0.6-language-switch.md)
+建议先 T1→T2→T3，再按分发需求安排 T4–T6；P2 按实际使用痛点独立排期，不回填为当前能力。
 
-后续原生构建可使用已通过的免费 Actions；不再次申请安装本机系统组件，不启动新的 agent，不改两份原始交付记录。数据实现仅有已记录且通过两平台 tests 的 rusqlite 0.37 MAIN_DB API 兼容修复。
+## 后续边界
+
+本机不安装 MSVC/SDK，原生构建沿用已通过的现有标准 Windows/macOS CI；不上传私人日志，不把合成测试当成真实日志/GUI 验收。代码或当前文档更新的授权不自动扩大为新 Release、旧 tag/附件覆盖、凭据变更或正式签名授权。历史版本的 `docs/ci-validation/` 与 `docs/releases/` 记录保留当时事实，当前状态以本文件和 0.0.7 最终证据为准。

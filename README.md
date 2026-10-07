@@ -26,7 +26,7 @@ Track local AI agent usage on Windows and macOS.
 | 导出 | 导出 JSON 完整历史归档或当前筛选范围的 CSV 报表 |
 | 语言与显示设置 | 默认中文，可切换英文并保存偏好；深色、浅色、跟随系统主题 |
 | 统计设置 | 来源开关与统计时区持久化 |
-| 自动完整扫描（当前源码） | 默认关闭；1/5/15 分钟检查、来源变化监听、休眠恢复检查与后台视图更新 |
+| 自动完整扫描 | 默认关闭；1/5/15 分钟检查、来源变化监听、休眠恢复检查与后台视图更新；两平台 CI 已通过，真实硬件恢复仍待验收 |
 
 **0.0.6 更新：** 默认中文界面，右上角语言图标可切换英文并保存偏好。页面、筛选、状态和图表文字统一切换，保留当前筛选与图表状态。Windows/macOS 构建、原生测试和安装验证已通过。[更新与构建记录](docs/ci-validation/0.0.6-language-switch.md)
 
@@ -210,20 +210,19 @@ cargo test -p usage-core -p usage-contracts -p usage-adapters --locked
 
 ## 路线图
 
-当前重点是把已实现的本地统计闭环补齐真实桌面与安装场景验收。后续功能包括：
+更新：2026-10-07。三来源、本地时区/中文英文、来源设置与导出、自动完整扫描 v1、两平台原生测试/安装检查/出包已完成。CI 合成测试不等于真实 GUI、睡眠或用户数据升级验收。
 
-- [ ] 自动完整扫描的两平台原生、休眠和安装验收（本地实现已完成）
-- [ ] 真正增量采集（游标、事件级去重与累加另行设计）
-- [ ] 数据备份、恢复、清除和应用数据目录迁移
-- [ ] JSON 归档导入、去重、多设备管理与独立数据集切换
-- [ ] 系统时区变更自动跟随
-- [ ] 自定义日期范围与项目维度统计
-- [ ] 托盘、开机启动、通知和自动更新
-- [ ] Antigravity `.pb` 与更多来源的可采集性验证
-- [ ] 有可信来源的订阅额度与重置时间展示
-- [ ] 正式签名 / 公证及完整第三方依赖许可清单
+- [x] 自动完整扫描 v1、后台事件刷新及两平台原生/安装 CI
+- [ ] [T1–T3 真机验收](docs/coordination/TODO_GUIDE.md#t1)：真实 GUI/IPC、最小化/休眠恢复、干净机、升级与最低 OS
+- [ ] [T4–T6 分发准备](docs/coordination/TODO_GUIDE.md#t4)：长期开发包/固定 Release、正式签名/公证、完整第三方 notices
+- [ ] [T7 真正增量](docs/coordination/TODO_GUIDE.md#t7)：游标、去重、修正/轮转和完整扫描一致性
+- [ ] [T8–T9 数据管理](docs/coordination/TODO_GUIDE.md#t8)：备份/恢复/清除/应用数据目录迁移、归档导入、多设备和独立数据集
+- [ ] [T10–T11 统计扩展](docs/coordination/TODO_GUIDE.md#t10)：系统时区跟随、自定义日期和可信项目维度
+- [ ] [T12 桌面体验](docs/coordination/TODO_GUIDE.md#t12)：托盘、开机启动、通知、经验证的自动更新
+- [ ] [T13–T15 来源扩展](docs/coordination/TODO_GUIDE.md#t13)：Antigravity conversation .pb、可信订阅额度、ChatGPT Web/DeepSeek Harness/Cowork 与可选同步
+- [ ] [T16 诊断展示](docs/coordination/TODO_GUIDE.md#t16)：可信采集版本和可获得的细进度，保留已有状态订阅
 
-ChatGPT Web、DeepSeek、Cowork 与可选同步属于后续路线，需要分别确认可获得的数据和统计口径。
+[完整功能/待办状态](docs/coordination/REMAINING_WORK.md) · [每项 TODO 的含义、例子与完成标准](docs/coordination/TODO_GUIDE.md)
 
 ## 参与贡献
 

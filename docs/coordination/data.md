@@ -1,5 +1,21 @@
 # 数据 agent 交付记录
 
+## 当前数据接入状态（2026-10-07）
+
+应用 **0.0.7**，锁定 ccusage **20.0.26**，Windows x64 / macOS ARM64 的固定 SRI/原始二进制 SHA 与安装后执行均已验证。[最终证据](../ci-validation/auto-full-scan-v1.md) · [当前待办](REMAINING_WORK.md)
+
+- 已接入 Claude Code、Codex sessions/archived_sessions、Antigravity 支持的 conversation .db；主 conversation .pb 仍未支持。附属 metadata 的 protobuf 过滤不等于主 .pb 采集实现。
+- 原生变化检查/监听复用 Adapter 目录解析和相同输入边界；JSONL 文件集合/身份/大小/mtime、DB/WAL、内容/不确定事件提示支持自动完整扫描。监听注册/过滤统一 canonical roots，Unix 别名回归在两平台通过。
+- Core 定义 inspect/watch，Adapter 执行 IO；只在已启用范围工作。指纹限定 provider/dataset/roots/timezone/collector/normalization，属于内存成功基线，不是解析游标或事件级账本。
+- 完整 Daily/Session、SQLite 原子替换、修正/失败/取消/不完整覆盖保留历史、缺失与零分开、固定离线价格和 UUID 身份规则保留；三个 supportsIncrementalCollection 与 supportsQuota 仍为 false。
+- 当前 17 项 Adapter lib tests、其余存储/进程/统计/宿主回归及两平台 native fixture 已通过；完整总数与 installed-sidecar 证据见最终记录。macOS 不再处于“仅验证架构、未执行”的状态。
+
+真正增量、用户数据维护/归档导入/多设备、.pb 与更多来源分别是 T7–T9/T13–T15。最低 OS、真实用户日志全矩阵与硬件/GUI 场景未完成，不把合成 fixture 当成这些验收。
+
+## 首阶段历史交付（2026-10-04）
+
+下文的单来源范围、Windows 本机执行/缺 link.exe、Mac 未执行和 13 项源码测试是当时事实，后续已扩展/验证；原始校验来源和业务口径仍保留，当前支持状态以上方摘要为准。
+
 日期：2026-10-04。基线：`CONTRACT_BASELINE.md` / Core 已冻结接口 / API 1.0.0。范围仅 Claude Code。
 
 **代码已实现；Windows 原生 CLI、Node schema/脚本测试和 Rust 格式检查已通过。Rust 编译、Rust 集成测试、受控 runner 的平台运行验收尚未完成。macOS ARM64 只有下载、完整性与架构证据，未执行。不能据此宣布完整桌面闭环已验收。**

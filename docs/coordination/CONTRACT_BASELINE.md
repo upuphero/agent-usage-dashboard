@@ -85,7 +85,17 @@ pnpm version:check
 
 `cargo test` 默认排除桌面主机，Ubuntu 的纯 Core 检查不要求 WebKit 或 sidecar。桌面本地无 sidecar 验证使用 tauri.local.conf.json；发行构建必须准备真实、锁定且验证过的本目标 sidecar，禁止用占位程序冒充。macOS 在本机不可执行；现已由免费 macos-15 ARM64 runner 实际完成编译、DMG/安装后的 sidecar/native 验证。Windows 同样由 windows-2022 x64 runner 验证；本机 MSVC/SDK 不安装。
 
-## 待办与变更流程
+## 当前待办与变更流程
+
+当前已完成 Settings 读写/目录选择、scan/auto 事件订阅及 API 1.2 自动配置/状态，不能再作为缺失接口排期。实现/验证结论以 0.0.7 最终记录为准：67 前端、16 Node/SQL、43 Linux Rust、两平台各 75 默认和 5 native（安装后再跑 5）、严格 clippy 与集中出包均通过。
+
+真正剩余的接口工作对应 [T7–T15](TODO_GUIDE.md#t7)：增量、用户数据维护/导入、多设备/独立数据集、时区跟随、日期/项目、桌面体验与来源/quota。T1–T3 是现有接口的真实平台验收，不是重新实现相同功能。当前订阅传递任务状态与自动状态，不宣称已提供逐文件百分比；来源卡片的 collector/normalization 版本展示仍属于可选诊断扩展。
+
+破坏性变更先记录原因/迁移与新版本，修改 Rust 契约并重新生成 TS，再跑相应兼容/边界/业务/平台检查；不把原始数据库行或日志正文加入 UI DTO。发布/签名范围见 [T4–T6](TODO_GUIDE.md#t4)，此次文档整理不执行新 Release 或凭据操作。
+
+## 早期集成与验证历史（2026-10-04）
+
+下文 38/51 项测试和 API 1.1 的“最新”是当时记录，保留语义交接事实；当前版本/证据以本文开头与 0.0.7 记录为准。
 
 主 agent：Core 业务和内存测试、DTO 映射、薄 commands、任务生命周期、依赖组装、导出、构建/CI；前端：Dashboard/Mock/transport/组件测试；数据：Claude Code parser/runner/SQLite/fixture/sidecar 锁。
 

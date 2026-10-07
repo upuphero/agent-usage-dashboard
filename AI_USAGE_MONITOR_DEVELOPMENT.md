@@ -1,12 +1,24 @@
 # agent-usage-dashboard 开发与发布计划
 
 > 项目名称：agent-usage-dashboard；项目目录：`agent-usage-dashboard`  
-> 文档版本：V0.2.2（当前仅开发 Windows x64 与 macOS Apple Silicon，不代表软件已经发布）  
-> 核实日期：2026-10-04  
+> 文档版本：V0.2.3（应用 0.0.7；当前仅 Windows x64 与 macOS Apple Silicon）  
+> 状态更新：2026-10-07，America/Phoenix  
 > 目标：将 ccusage 与 UI Dashboard 打包成 Windows / macOS 桌面软件  
 > 当前目标平台：Windows x64、macOS ARM64（Apple Silicon）；Intel Mac 暂不开发  
 > 原则：本地优先、前后端分离与解耦、安装包小、默认无遥测、可通过 GitHub Actions 构建  
-> 当前状态：项目目录只有本计划，尚未初始化 Git 仓库；没有应用代码、安装包或已运行的 CI。
+> 当前状态：公开仓库和应用 0.0.7 / API 1.2 / profile v4 已实现，Windows NSIS/portable 与 Mac ARM64 DMG 通过原生 CI/安装检查；真实 GUI/休眠/升级等仍待验收，尚无版本化安装包 Release。当前功能与 TODO 以以下摘要为准，历史记录保留当时事实。
+
+## 当前已实现功能与待办入口
+
+| 已实现 / 已通过 | 仍未完成 |
+| --- | --- |
+| 三个本地来源、完整 Daily/Session/SQLite、日周月/模型/会话统计与字段质量、来源开关/目录/设置 revision、手动扫描与导出 | 真正增量、用户备份/恢复/清除/应用数据迁移、归档导入/多设备/独立数据集 |
+| 本地时区默认与旧 UTC 迁移、中文默认/英文切换、主题、自动完整扫描默认关闭/1/5/15、合并/限流/恢复/取消/退避/后台刷新 | 系统时区后续自动跟随、自定义日期 UI/项目维度、托盘/开机启动/通知/updater、.pb/可信 quota/更多来源 |
+| 67 前端、16 Node/SQL、43 Linux Rust；两平台各 75 默认 + 5 native + 安装后重复 5 native、严格 clippy、安装器和 SHA 校验 | 真实桌面 UI/IPC、硬件睡眠、干净机/用户数据升级/最低 OS、长期 Release、正式签名/公证、完整 notices |
+
+[当前功能/优先级/完成出口](docs/coordination/REMAINING_WORK.md) · [TODO 的含义和例子](docs/coordination/TODO_GUIDE.md) · [0.0.7 实际 CI 与安装包证据](docs/ci-validation/auto-full-scan-v1.md)
+
+安装包代码为 `465ac24ef7e99d5e465d5e9b495ce9d5672084b0`，run 37672597908 五个 jobs 全部成功。软件版本与下文 V0.1/V0.2 产品阶段不是同一个编号；已经实现的能力不能因阶段名仍列为待开发，未实测场景也不能因版本号被勾为通过。
 
 ## 1. 可行性结论与关键决策
 
@@ -17,8 +29,8 @@
 | 决策 | 选择及理由 |
 |---|---|
 | 桌面框架 | Tauri 2；复用系统 WebView，适合控制发行体积 |
-| 前端 | React + TypeScript + Vite；shadcn/ui 按需使用 |
-| 图表 | ECharts 按需导入；以构建分析决定保留的图表类型 |
+| 前端 | 已采用 React + TypeScript + Vite、TanStack Query 与项目内 CSS/SVG 组件；未引入 shadcn/ui |
+| 图表 | 已采用项目内 CSS/SVG 趋势/分布图；未引入 ECharts，后续库选型不代表现有依赖 |
 | 后端 | Rust Core 定义业务与接口；Adapters 实现采集/存储；Tauri 负责入口与组装 |
 | 数据库 | rusqlite + bundled SQLite；首版只选一个数据库访问库 |
 | 用量引擎 | ccusage sidecar；保留独立 Provider Adapter，避免 UI 绑定 CLI JSON |
@@ -78,15 +90,15 @@ OpenAI 的组织 Usage API 面向 API 组织用量，不能据此承诺普通 Ch
 
 ### 3.3 核实范围
 
-截至核实日期，上游 `apps/ccusage/package.json` 的版本字段为 `20.0.26`，声明的 native optional dependencies 包括本项目需要的 Windows x64 与 macOS ARM64 包。[上游包清单](https://github.com/ccusage/ccusage/blob/main/apps/ccusage/package.json)
-
-这确认了原生包的设计方向，**不等同于已验证每个 npm 发布包都能下载、大小达标或在目标系统运行**。本次未取得两端发布二进制，也未执行它们；`20.0.26` 只是候选基线。Phase 0 必须确认 npm 发行物、校验值、实际命令和输出，再写入版本锁。
+项目固定 **ccusage 20.0.26**，原生包 SRI、原始二进制 SHA、架构/大小已写入 [ccusage.lock.json](ccusage.lock.json)。这不是对上游当前最新版的声明。两目标的 CLI、fixture、安装位置执行与原始 SHA 均已在现有 CI 验证；未临时替换版本或从安装位置生成新的来源 hash 预期。[0.0.7 证据](docs/ci-validation/auto-full-scan-v1.md)
 
 ## 4. MVP 与后续版本
 
 ### 4.1 V0.1：先交付本地 Agent Dashboard
 
-必须交付：
+原产品阶段要求如下；0.0.7 已实现统计/设置/导出和两平台 CI 包，Draft Release、正式分发与完整真机验收仍未完成。基础设置中的“数据目录”目前仅有来源目录选择，应用数据目录迁移是 T8。
+
+产品要求：
 
 - Windows x64 与 macOS ARM64（Apple Silicon）的安装包。
 - Claude Code、Codex、Antigravity 的检测、来源路径配置、手动刷新和错误诊断。
@@ -405,16 +417,16 @@ supportsQuota: true / false
 
 1. 首次启用来源时说明将读取的位置；允许选择自定义目录，不扫描整个磁盘。
 2. 先显示已有 SQLite 数据，再异步刷新。
-3. 手动扫描已实现。自动完整扫描阶段提供 1、5、15 分钟检查间隔（默认 5 分钟），默认关闭；调度放在原生宿主，来源无变化则跳过采集。
+3. 手动与自动完整扫描均已实现。自动采集默认关闭，提供 1、5、15 分钟（默认 5）；Rust 宿主调度，可信成功基线且无变化时跳过，监听不可用/丢失或恢复等不确定状态保守复核。
 4. CLI 如果每次都全量扫描，就明确记录这一成本；文件监听不等于增量解析。历史越大时应退避并允许取消。
 5. 大历史按能证明完整覆盖的范围重建；常规刷新只替换对应成功分区。不要仅凭最后扫描时间跳过晚到或被修正的数据。
 6. 休眠恢复、多个窗口或重复点击合并为单个任务；退出时终止任务并回收 sidecar。
 
 状态至少区分：`Not detected`、`No data`、`Ready`、`Scanning`、`Permission denied`、`Schema unsupported`、`Partial`、`Stale`、`Error`。诊断仅包括版本、错误码、耗时、脱敏路径和建议；解析失败不能显示“今日 0 tokens”。
 
-### 10.1 自动完整扫描第一版（0.0.6 之后）
+### 10.1 自动完整扫描第一版（0.0.7 已实现）
 
-本阶段将定时检查、有效日志变化和休眠恢复纳入 Rust 宿主统一调度器；只有已启用来源发生变化或缺少可信成功基线时，调用现有完整扫描。新增自动采集设置、请求合并/限流、取消/失败退避、退出回收和前端后台事件刷新。保持完整快照语义与 `supportsIncrementalCollection=false`，真正增量另按来源实施。
+定时检查、有效日志提示和恢复检测已纳入 Rust 宿主统一调度器；自动配置、合并/限流、取消/失败退避、退出回收和前端后台事件刷新已完成。可信无变化跳过，不确定状态保守复核；保持完整快照语义与 `supportsIncrementalCollection=false`。两平台合成/原生/安装测试通过，真实硬件恢复与 GUI 仍需 T1–T3 验收，真正增量是 T7。
 
 详细实施顺序、兼容要求、验收清单和新会话可复制 prompt 见 [自动完整扫描开发计划](docs/coordination/AUTO_FULL_SCAN_PLAN.md)。
 
@@ -531,7 +543,7 @@ Sessions 的日期过滤若只能做到“该期间活跃的会话”，就用�
 
 ### 15.1 先定义“尽量小”
 
-以下是**工程预算，尚未实测，不是交付承诺**。统一使用 MiB（1 MiB = 1,048,576 bytes）。
+以下保留工程预算，统一使用 MiB（1 MiB = 1,048,576 bytes）。0.0.7 已实测 NSIS 4.11 MiB、portable ZIP 5.66 MiB、ARM64 DMG 5.11 MiB，均小于当前 40 MiB 包上限；这些数字不包含额外 WebView2 下载，也不代表安装后总占用。[实际大小与 SHA](docs/ci-validation/auto-full-scan-v1.md)
 
 | 项目 | 暂定目标 | 统计方式 |
 |---|---|---|
@@ -695,7 +707,7 @@ flowchart TD
 - 构建清单记录 app commit、ccusage 版本与原始哈希、工具链、runner image、最终产物大小和 SHA-256。sidecar 重新签名后字节会改变，分别记录签名前来源校验与签名后的最终校验。
 - 更新元数据必须在所有架构更新包和签名齐全后统一生成。V0.1 未实现 updater 时不发布貌似可用的更新入口。
 
-本节定义要实现的 pipeline，不是已经验证可直接复制运行的完整 workflow；脚本、锁文件和 Action SHA 在 bootstrap 时落地，先跑通两端再宣称完成自动化。
+当前验证、两平台构建/安装、集中 artifacts 与 SHA 已在现有工作流跑通；本节的 Draft/publish/更新签名部分仍是设计目标，不是当前已执行的 Release 流程。[当前工作流](docs/GITHUB_ACTIONS.md) · [T4–T5](docs/coordination/TODO_GUIDE.md#t4)
 
 ## 18. 签名与正式分发
 
@@ -744,12 +756,12 @@ Tauri updater 使用独立更新签名密钥，与 Apple / Windows 平台证书�
 成本控制：
 
 - 使用标准 runner，避免无需求启用 larger runner。
-- 中间 artifacts 默认保留约 7 天；长期安装包使用 GitHub Release assets。
+- 当前 Actions artifacts 保留 **1 天**、不启用 cache；长期安装包 Release assets 是 T4 待办，尚未实现。
 - 不缓存重复的完整构建目录和多份 sidecar；监测 artifact / cache 配额。
 - macOS 正式分发的开发者账号，以及 Windows 代码签名服务/证书，独立预算。
 - 浏览器扩展商店发布可能有单独要求；进入扩展阶段再核实。
 
-拟使用 Public + MIT，但创建公开仓库前需确认代码、示例和文档没有真实路径、日志或凭据。保留第三方许可证与 notices，并随固定依赖版本更新。
+仓库已为 Public + MIT，代码/示例/文档排除私人日志、凭据和本地生成物。ccusage MIT 已打包；完整依赖 notices 库存仍是 T6，随固定依赖版本和实际分发内容核对。
 
 ## 20. 验证策略与发布门槛
 
@@ -775,21 +787,19 @@ fixture 采用最小合成数据或经过检查的脱敏数据，保留必要 us
 
 每个支持平台检查实际安装包内的 sidecar，而不仅是下载暂存目录里的那份。平台 smoke、前端组件测试和 Core 测试各验证自己的风险；不为每段实现复制一套无意义测试。
 
-### 20.2 V0.1 Definition of Done
+### 20.2 当前交付检查表（2026-10-07）
 
-- [ ] 前端可独立浏览器开发/构建，Core 可脱离 Tauri / SQLite / ccusage 独立测试。
-- [ ] 页面只使用 UsageClient；Core 只依赖端口；具体实现在启动入口注入，依赖检查通过。
-- [ ] API 契约有唯一来源和兼容规则；数据库行及 ccusage 原始 JSON 不进入 UI 契约。
-- [ ] Windows x64 与 macOS ARM64 两目标构建成功，安装后不需要 Node.js / Bun / Rust；最低支持系统已明确。
-- [ ] Claude Code / Codex / Antigravity 的支持状态与平台矩阵一致，有对应 fixture。
-- [ ] Daily、Week、Month、Session、Model 统计遵守第 7–9 节口径。
-- [ ] 相同数据连续刷新三次总量不变；数据修正能够替换旧快照。
-- [ ] 缺失、失败和无数据可区分；API 等价成本不会显示为真实订阅支出。
-- [ ] 日期、精度、来源、覆盖范围与更新时间可见。
-- [ ] 导出 JSON / CSV，重启后 DB 保留，诊断不含正文和凭据。
-- [ ] 每平台记录实际安装包、sidecar、前端和安装后体积；超预算有结论。
-- [ ] Release 依赖精确提交的验证，必需资产齐全后才能生成 Draft / 发布。
-- [ ] 开发测试包与正式签名包标识明确；面向普通用户发布前通过对应分发验证。
+- [x] 前端独立浏览器开发/构建，Core 脱离真实 IO 单测；依赖方向、注入与 UsageClient 边界通过检查。
+- [x] Rust 契约/生成 TS 唯一来源，API 1.2 能力协商兼容旧请求；DB/上游 JSON 不进入 UI。
+- [x] 两目标构建、实际安装/解压、固定 sidecar 和 native fixture 通过，不要求用户另装 Node/Bun/Rust/ccusage。
+- [x] 三个本地来源支持边界明确，有合成 fixture；Antigravity .pb 不宣传已支持。
+- [x] 日周月、会话/模型、精度、覆盖、缺失/零/失败、重复扫描与修正语义通过相关测试。
+- [x] 来源/目录/时区设置、profile 身份迁移、中文英文、JSON/CSV 导出和退出回收实现并通过相应测试。
+- [x] 自动完整扫描、事件刷新、原生监听/恢复政策、取消门禁和手动结果一致性通过 CI。
+- [x] 当前安装包/sidecar/前端大小和 SHA 有记录，包上限检查通过。
+- [ ] T1–T3：实际 WebView GUI/原生对话框、硬件睡眠、干净机、升级/卸载、最低 OS；仍不能宣称完整产品 DoD。
+- [ ] T4：精确提交的长期滚动/固定 Release 附件与可恢复发布。
+- [ ] T5–T6：正式签名/公证、完整 notices 与真实下载分发验证；安装后总占用/依赖占用按 T3 补齐。
 
 ## 21. 实施顺序与阶段出口
 
@@ -823,23 +833,25 @@ fixture 采用最小合成数据或经过检查的脱敏数据，保留必要 us
 
 **出口：** 每项扩展有来源说明、fixture、独立开关和明确能力边界。
 
-## 22. 开发前仍需收敛的事项
+## 22. 已收敛决策与仍待确认的事项
 
-以下事项不会阻止 Phase 0，也不作为本次文档修订的已完成事实：
+按 0.0.7 事实更新；不能把已验证的构建/体积再次列为开发前阻塞，也不能把平台未验收的场景省略：
 
 | 待确认项 | 当前暂定值 / 处理方式 |
 |---|---|
 | “ChatGPT”是否主要指 Codex 使用量 | 分开建模；V0.1 支持 Codex，网页采集实验性后置 |
 | Claude 是否包含 Web / Cowork | V0.1 只承诺 Claude Code，其他产品独立验证 |
 | DeepSeek Harness 的具体对象 | 需要仓库/产品、版本与最小日志样例，不凭名称设计 parser |
-| 最低操作系统版本 | Phase 0 根据主程序、sidecar、WebView 的兼容交集锁定 |
-| 40 MiB 是否可达到 | 保留为预算，以两端完整包实测决定；无运行时 Windows 的额外下载单列 |
+| 最低操作系统版本 | T3 待验收；runner OS 和 macOS 13.0 deployment target 不等于实际最低支持版本 |
+| 40 MiB 是否可达到 | 当前三包 4.11/5.66/5.11 MiB，已实测通过；WebView2 额外下载及安装后占用继续单列 |
 | Windows 是否必须完全离线安装 | 默认小安装器；完全离线版作为独立较大产物 |
 | 公开分发和签名预算 | 开发测试可先做；面向普通用户的 Beta 前确定 |
 
-下一步应执行 Phase 0 的两端最小打包和数据契约验证，然后按验证结果实现 MVP。本计划中的能力、阈值和流程都有对应的验收出口；在证据产生之前保持“计划 / 待验证”状态。
+原 Phase 0/Phase 1 的构建、契约、三来源统计与合成闭环已有证据；当前下一步是 T1–T3 真机验收，再按分发需求推进 T4–T6。Phase 2 的长期 Release/正式分发尚未整体完成，Phase 3 扩展依然独立排期。[当前任务与出口](docs/coordination/REMAINING_WORK.md)
 
-## 23. 2026-10-05 自动完整扫描第一版工作树
+## 23. 自动完整扫描的开发与验收历史
+
+以下第一段为 2026-10-05 本地阶段快照，后一段为 2026-10-07 最终 CI；“尚未提交/原生未验证”是当时状态，不能当作当前 TODO。
 
 基于应用 0.0.6 实现默认关闭的自动采集、1/5/15 分钟（默认 5）、Adapter metadata/WAL/原生监听、Rust 串行统一调度/合并/休眠恢复/取消/退避和前端后台刷新。保留本地时区、中英文、token/价格/数据集身份与完整快照替换；三个 incremental 能力仍为 false。契约升级至 1.2，profile v4 保留旧身份/历史，自动开关使用独立 revision 校验接口，不绕过来源/时区写入门禁。
 
