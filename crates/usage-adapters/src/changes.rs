@@ -185,6 +185,10 @@ pub(crate) fn watch(
     roots: Vec<PathBuf>,
     changed: ChangeCallback,
 ) -> Result<Box<dyn SourceWatch>, CoreError> {
+    // FSEvents reports canonical paths (e.g. /private/var rather than /var).
+    // Use the same paths for registration and filtering, including caller aliases.
+    let roots = roots.into_iter().map(|root| root.canonicalize().map_err(io_error))
+        .collect::<Result<Vec<_>, _>>()?;
     let filter = roots.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
         if event
@@ -332,17 +336,26 @@ mod tests {
     #[test]
     fn scoped_native_watcher_observes_real_writes_and_drops_cleanly() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir(dir.path().join("projects")).unwrap();
+        let logs = dir.path().join("logs");
+        fs::create_dir_all(logs.join("projects")).unwrap();
+        #[cfg(unix)]
+        let root = {
+            let alias = dir.path().join("logs-alias");
+            std::os::unix::fs::symlink(&logs, &alias).unwrap();
+            alias
+        };
+        #[cfg(windows)]
+        let root = logs.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         let watcher = watch(
             Layout::Claude,
-            vec![dir.path().into()],
+            vec![root],
             std::sync::Arc::new(move || {
                 let _ = tx.send(());
             }),
         )
         .unwrap();
-        fs::write(dir.path().join("projects/synthetic.jsonl"), "synthetic").unwrap();
+        fs::write(logs.join("projects/synthetic.jsonl"), "synthetic").unwrap();
         rx.recv_timeout(std::time::Duration::from_secs(10))
             .expect("native content event");
         drop(watcher);

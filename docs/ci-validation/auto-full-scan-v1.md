@@ -57,3 +57,9 @@
 两平台实际恢复验证方式（待执行）：安装新包，配置合成日志并开启 1 分钟，记录最近成功/下次检查；最小化后追加 JSONL 或对支持的合成数据库写入 WAL，确认后台完成并更新图表；Windows 使用系统“睡眠”，macOS 使用 Apple 菜单“睡眠”，等待跨过至少三个周期，在休眠前/恢复后修正合成历史，唤醒应只合并一次检查、不补三个扫描；连续写入不得每 2 秒完整扫描；取消/关闭后不立即重启该来源；退出后确认主进程/sidecar 无残留，重启配置/身份/历史保留。UTC 跨度检测的合成测试仅证明政策，不代替这两次真实睡眠验证。
 
 浏览器截图（合成数据，本地未跟踪 artifact）：`artifacts/browser-validation/auto-full-scan-zh.jpg`。
+
+## 2026-10-07 CI 续验
+
+运行 [37419753551](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37419753551)，提交 `f663ee331f01ffa1153b20131c83aea1e247d8ea`：基础前端/Core/Adapter 验证通过；Windows 原生 unit、sidecar fixture、NSIS/portable 安装检查和 host clippy 全部通过。macOS 构建成功，但原生文件监听测试超时，因此没有生成集中安装包。
+
+已定位并修正监听路径别名问题：FSEvents 的事件路径经过规范化，而原过滤器可保留 `/var` 等别名，导致合法事件不匹配。监听注册与过滤现统一使用 canonical roots；同一原生测试在 Unix 显式使用目录别名，避免只修改 fixture 来绕过问题。修复后重新运行完整两平台流水线，最终结果与安装包校验在完成后补充。
