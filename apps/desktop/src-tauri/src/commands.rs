@@ -25,6 +25,9 @@ pub fn get_api_info(state: State<'_, Arc<Runtime>>) -> api::ApiInfo {
             "auto-full-scan".into(),
         ]);
     }
+    if state.timezone_available() {
+        capabilities.push("timezone-follow-system".into());
+    }
     api::ApiInfo {
         api_version: api::API_VERSION.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
@@ -43,6 +46,19 @@ pub async fn update_auto_collection(
     request: api::UpdateAutoCollectionRequest,
 ) -> Result<api::AutoCollectionStatus, api::ApiError> {
     state.update_auto_collection(request).await
+}
+#[tauri::command]
+pub async fn get_timezone(
+    state: State<'_, Arc<Runtime>>,
+) -> Result<api::TimezoneStatus, api::ApiError> {
+    state.get_timezone().await
+}
+#[tauri::command]
+pub async fn update_timezone(
+    state: State<'_, Arc<Runtime>>,
+    request: api::UpdateTimezoneRequest,
+) -> Result<api::TimezoneStatus, api::ApiError> {
+    state.update_timezone(request).await
 }
 #[tauri::command]
 pub async fn list_providers(

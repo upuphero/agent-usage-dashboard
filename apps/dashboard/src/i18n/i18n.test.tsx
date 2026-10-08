@@ -53,6 +53,7 @@ describe('complete Chinese and English interfaces', () => {
       cache.setQueryData(['usage', 'api'], DEMO_API_INFO);
       cache.setQueryData(['usage', 'providers'], PROVIDERS);
       cache.setQueryData(['usage', 'settings'], await client.getSettings());
+      cache.setQueryData(['usage', 'timezone'], await client.getTimezone());
       cache.setQueryData(['usage', 'overview', query], await client.getOverview(query));
       const sessionQuery = { timezone: DEMO_TIMEZONE, providerIds: PROVIDERS.filter(provider => provider.capabilities.reportKinds.includes('session')).map(provider => provider.providerId), modelIds: [], activeRange: null, offset: 0, limit: 20 };
       cache.setQueryData(['usage', 'sessions', sessionQuery], await client.listSessions(sessionQuery));
@@ -65,6 +66,10 @@ describe('complete Chinese and English interfaces', () => {
       expect(chineseHtml).toContain('aria-label="概览"');
       expect(chineseHtml).toContain('aria-label="切换到英文"');
       expect(chineseHtml).not.toContain('LOCAL DASHBOARD');
+      if (page === 'settings') {
+        expect(englishHtml).toContain('Follow the system timezone (recommended)'); expect(englishHtml).toContain('aria-label="Fixed reporting timezone"');
+        expect(chineseHtml).toContain('跟随系统时区（推荐）'); expect(chineseHtml).toContain('aria-label="固定统计时区"');
+      }
       cache.clear();
     });
   }

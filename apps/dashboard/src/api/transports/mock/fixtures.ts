@@ -111,5 +111,5 @@ export const SESSIONS: SessionItem[] = [
 ];
 export const DEMO_API_INFO = {
   apiVersion: API_VERSION, appVersion,
-  capabilities: ['overview', 'sessions', 'scan-polling', 'scan-events', 'auto-full-scan', 'export-json-full-history', 'export-csv', 'demo-data', 'settings-read', 'settings-write', 'source-directory-selection'],
+  capabilities: ['overview', 'sessions', 'scan-polling', 'scan-events', 'auto-full-scan', 'export-json-full-history', 'export-csv', 'demo-data', 'settings-read', 'settings-write', 'source-directory-selection', 'timezone-follow-system'],
 };

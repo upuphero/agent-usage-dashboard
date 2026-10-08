@@ -10,7 +10,9 @@
 - UsageClient.subscribeUsage 已接入扫描/自动状态事件；transport 负责监听释放、失败重试、focus/visibility 和 15 秒后备同步。扫描开始/结束刷新来源/图表/会话，纯自动状态事件只更新状态缓存；getScan 的手动长轮询仍保留。
 - 普通页面/hooks 不放完整扫描定时器；真正采集与调度在 Rust。Mock 仅当前页面会话合成行为，不读取用户磁盘，不代表实际后端/真机验收。
 
-剩余前端工作：T1–T3 真机验收；T8–T12 数据维护/导入/时区跟随/日期项目/桌面体验 UI。已有事件订阅不再列为“缺少订阅接口”；采集器版本展示和更细处理进度仍属于可选诊断扩展。
+**0.0.8 分支（系统时区跟随，未经 CI）：** 消费 API 1.3。具备 `timezone-follow-system` 能力时，查询/扫描时区直接取宿主 `effectiveTimezone`（渲染期派生，未知前不发起概览/会话/模型查询），时区变化时分页重置、日期预设随之重算；`TimezoneSettings` 提供“跟随系统时区（推荐）/固定时区”单选组、生效与系统时区状态、固定时区选择（`Intl.supportedValuesOf` 后备短列表）和重建说明；`TimezoneNotice` 显示重建进度/取消、退避重试时间、待切换目标与检测失败。`acceptTimezoneStatus` 按十进制 sequence（BigInt）丢弃过期或相同序号的响应/事件，生效时区、revision、模式变化或重建结束时刷新设置/来源/图表/会话/自动状态缓存。旧服务回退原时区选择器，不发送新命令。语言/主题切换不访问宿主。Mock 提供可测试的模拟系统时区与检测失败；演示数据仍只有 America/Phoenix。本地 14 文件 88 项 tests、typecheck/lint/build 通过。[设计与本地验证](../ci-validation/follow-system-timezone-v1.md)
+
+剩余前端工作：T1–T3 真机验收；T8–T9、T11–T12 数据维护/导入/日期项目/桌面体验 UI；T10 时区跟随的真机 WebView 验收。已有事件订阅不再列为“缺少订阅接口”；采集器版本展示和更细处理进度仍属于可选诊断扩展。
 
 ## 首阶段历史交付（2026-10-04）
 

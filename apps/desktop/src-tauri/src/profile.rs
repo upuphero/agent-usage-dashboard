@@ -1,5 +1,6 @@
 //! Host-private persistence for stable local identities and initial source configuration.
 //! This file is not an API DTO or a database row. Source configuration changes never create a new identity implicitly.
+use crate::timezone::SystemTimezone;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -52,6 +53,27 @@ pub struct DesktopProfile {
     pub additional_providers: BTreeMap<String, ProviderProfile>,
     #[serde(default)]
     pub auto_collection: AutoCollectionProfile,
+    /// v1-v4 stored no mode; a saved zone may be a deliberate choice, so it stays fixed.
+    #[serde(default = "legacy_timezone_mode")]
+    pub timezone_mode: TimezoneMode,
+}
+/// `timezone` is always the effective statistical zone; FollowSystem only changes who updates it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimezoneMode {
+    FollowSystem,
+    Fixed,
+}
+impl From<TimezoneMode> for usage_contracts::TimezoneMode {
+    fn from(mode: TimezoneMode) -> Self {
+        match mode {
+            TimezoneMode::FollowSystem => Self::FollowSystem,
+            TimezoneMode::Fixed => Self::Fixed,
+        }
+    }
+}
+fn legacy_timezone_mode() -> TimezoneMode {
+    TimezoneMode::Fixed
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -70,16 +92,16 @@ impl Default for AutoCollectionProfile {
 fn initial_revision() -> u64 {
     1
 }
+/// A first profile needs some zone; Follow mode replaces this placeholder once detection succeeds.
 fn system_timezone() -> String {
-    iana_time_zone::get_timezone()
-        .ok()
-        .filter(|zone| usage_core::application::validate_timezone(zone).is_ok())
-        .unwrap_or_else(|| "UTC".into())
+    crate::timezone::OsTimezone
+        .detect()
+        .unwrap_or_else(|_| "UTC".into())
 }
 impl DesktopProfile {
     fn fresh() -> Self {
         Self {
-            profile_version: 4,
+            profile_version: 5,
             device_id: uuid::Uuid::new_v4().to_string(),
             claude_dataset_id: uuid::Uuid::new_v4().to_string(),
             claude_enabled: false,
@@ -93,13 +115,14 @@ impl DesktopProfile {
                 .map(|id| ((*id).into(), ProviderProfile::fresh()))
                 .collect(),
             auto_collection: AutoCollectionProfile::default(),
+            timezone_mode: TimezoneMode::FollowSystem,
         }
     }
     fn validate(&self) -> Result<(), CoreError> {
-        if self.profile_version > 4 {
+        if self.profile_version > 5 {
             return Err(CoreError::StorageSchemaNewer);
         }
-        if !matches!(self.profile_version, 1..=4)
+        if !matches!(self.profile_version, 1..=5)
             || self.settings_revision == 0
             || !matches!(self.auto_collection.interval_minutes, 1 | 5 | 15)
         {
@@ -151,12 +174,8 @@ impl DesktopProfile {
         Ok(())
     }
     fn migrate(&mut self, local_timezone: &str) -> Result<bool, CoreError> {
-        if self.profile_version >= 4 {
+        if self.profile_version >= 5 {
             return Ok(false);
-        }
-        if self.profile_version == 3 {
-            self.profile_version = 4;
-            return Ok(true);
         }
         if self.profile_version == 1 {
             for id in &PROVIDERS[1..] {
@@ -165,9 +184,9 @@ impl DesktopProfile {
                     .or_insert_with(ProviderProfile::fresh);
             }
         }
-        // Older releases defaulted every machine to UTC. Correct that default once;
+        // Releases before v3 defaulted every machine to UTC. Correct that default once;
         // retain other saved zones and respect explicit UTC choices after migration.
-        if self.timezone == "UTC" && local_timezone != "UTC" {
+        if self.profile_version <= 2 && self.timezone == "UTC" && local_timezone != "UTC" {
             usage_core::application::validate_timezone(local_timezone)?;
             self.timezone = local_timezone.into();
             self.settings_revision = self
@@ -176,16 +195,24 @@ impl DesktopProfile {
                 .ok_or(CoreError::Overflow)?;
             self.timezone_needs_rescan = true;
         }
-        self.profile_version = 4;
+        // Never overwrite a saved zone (including an explicit UTC) with the current system zone.
+        self.timezone_mode = TimezoneMode::Fixed;
+        self.profile_version = 5;
         Ok(true)
     }
     fn read(path: &Path) -> Result<Self, CoreError> {
         if fs::metadata(path).map_err(|_| CoreError::Storage)?.len() > 16 * 1024 {
             return Err(CoreError::InvalidData);
         }
-        let profile: Self =
-            serde_json::from_slice(&fs::read(path).map_err(|_| CoreError::Storage)?)
-                .map_err(|_| CoreError::InvalidData)?;
+        let bytes = fs::read(path).map_err(|_| CoreError::Storage)?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| CoreError::InvalidData)?;
+        // A newer host may add fields: report its schema as newer, not as corrupt.
+        let version = value["profileVersion"].as_u64();
+        if version.is_some_and(|version| version > 5) {
+            return Err(CoreError::StorageSchemaNewer);
+        }
+        let profile: Self = serde_json::from_value(value).map_err(|_| CoreError::InvalidData)?;
         profile.validate()?;
         Ok(profile)
     }
@@ -350,8 +377,9 @@ mod tests {
         assert_eq!(read.auto_collection.interval_minutes, 5);
         let timezone = read.timezone.clone();
         read.migrate("Asia/Shanghai").unwrap();
-        assert_eq!(read.profile_version, 4);
+        assert_eq!(read.profile_version, 5);
         assert_eq!(read.timezone, timezone);
+        assert_eq!(read.timezone_mode, TimezoneMode::Fixed);
         assert_eq!(read.device_id, original.device_id);
         assert_eq!(read.claude_dataset_id, original.claude_dataset_id);
         assert_eq!(read.settings_revision, original.settings_revision);
@@ -379,8 +407,18 @@ mod tests {
     fn newer_or_corrupt_profiles_are_never_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let mut profile = DesktopProfile::load_or_create(dir.path()).unwrap();
-        profile.profile_version = 5;
+        profile.profile_version = 6;
         let bytes = serde_json::to_vec(&profile).unwrap();
+        fs::write(dir.path().join("profile.json"), &bytes).unwrap();
+        assert!(matches!(
+            DesktopProfile::load_or_create(dir.path()),
+            Err(CoreError::StorageSchemaNewer)
+        ));
+        assert_eq!(fs::read(dir.path().join("profile.json")).unwrap(), bytes);
+        // A future version with fields this host does not know is newer, not corrupt.
+        let mut future = serde_json::to_value(&profile).unwrap();
+        future["futureSetting"] = true.into();
+        let bytes = serde_json::to_vec(&future).unwrap();
         fs::write(dir.path().join("profile.json"), &bytes).unwrap();
         assert!(matches!(
             DesktopProfile::load_or_create(dir.path()),
@@ -411,9 +449,11 @@ mod tests {
         assert_eq!(read.claude_dataset_id, original.claude_dataset_id);
     }
     #[test]
-    fn new_profiles_use_the_operating_system_timezone() {
+    fn new_profiles_follow_the_operating_system_timezone() {
         let profile = DesktopProfile::fresh();
-        assert_eq!(profile.timezone, iana_time_zone::get_timezone().unwrap());
+        let system = iana_time_zone::get_timezone().unwrap();
+        assert_eq!(Some(profile.timezone), crate::timezone::canonical(&system));
+        assert_eq!(profile.timezone_mode, TimezoneMode::FollowSystem);
         assert!(!profile.timezone_needs_rescan);
     }
     #[test]
@@ -434,6 +474,7 @@ mod tests {
         );
         assert!(old.claude_enabled);
         assert!(old.timezone_needs_rescan);
+        assert_eq!(old.timezone_mode, TimezoneMode::Fixed);
         let dir = tempfile::tempdir().unwrap();
         old.persist(dir.path()).unwrap();
         let mut reopened = DesktopProfile::load_or_create(dir.path()).unwrap();
@@ -481,5 +522,45 @@ mod tests {
             migrated.provider("ccusage.codex").unwrap().dataset_id,
             migrated.provider("ccusage.antigravity").unwrap().dataset_id
         );
+    }
+    #[test]
+    fn version_four_keeps_its_saved_timezone_as_fixed_with_identity_and_flags() {
+        for saved in ["UTC", "Asia/Shanghai", "Asia/Calcutta"] {
+            let mut original = DesktopProfile::fresh();
+            original.profile_version = 4;
+            original.timezone = saved.into();
+            original.timezone_needs_rescan = true;
+            original.claude_enabled = true;
+            original.auto_collection.enabled = true;
+            let mut legacy = serde_json::to_value(&original).unwrap();
+            legacy.as_object_mut().unwrap().remove("timezoneMode");
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("profile.json");
+            fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+            let migrated = DesktopProfile::load_or_create(dir.path()).unwrap();
+            assert_eq!(migrated.profile_version, 5);
+            assert_eq!(migrated.timezone_mode, TimezoneMode::Fixed);
+            assert_eq!(migrated.timezone, saved);
+            assert!(migrated.timezone_needs_rescan);
+            assert_eq!(migrated.settings_revision, original.settings_revision);
+            assert_eq!(migrated.device_id, original.device_id);
+            assert_eq!(migrated.claude_dataset_id, original.claude_dataset_id);
+            assert!(migrated.claude_enabled && migrated.auto_collection.enabled);
+            let stored: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(stored["timezoneMode"], "fixed");
+            assert_eq!(stored["profileVersion"], 5);
+        }
+    }
+    #[test]
+    fn follow_mode_round_trips_and_unknown_modes_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = DesktopProfile::load_or_create(dir.path()).unwrap();
+        assert_eq!(profile.timezone_mode, TimezoneMode::FollowSystem);
+        let reopened = DesktopProfile::load_or_create(dir.path()).unwrap();
+        assert_eq!(reopened.timezone_mode, TimezoneMode::FollowSystem);
+        let mut value = serde_json::to_value(&profile).unwrap();
+        value["timezoneMode"] = "travel".into();
+        assert!(serde_json::from_value::<DesktopProfile>(value).is_err());
     }
 }

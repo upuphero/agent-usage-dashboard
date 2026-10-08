@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MockUsageClient } from './mock/MockUsageClient';
 import { TauriUsageClient, type CommandInvoker, type EventSubscriber } from './tauri/TauriUsageClient';
-import { API_VERSION, AUTO_COLLECTION_EVENT, COMMANDS, SCAN_EVENT, type ApiInfo, type ScanSummary } from '../generated/usage';
+import { API_VERSION, AUTO_COLLECTION_EVENT, COMMANDS, SCAN_EVENT, TIMEZONE_EVENT, type ApiInfo, type ScanSummary } from '../generated/usage';
 import { DEMO_API_INFO, DEMO_TIMEZONE } from './mock/fixtures';
 import type { UsageEvent } from '../client';
 
@@ -77,19 +77,19 @@ describe('automatic full scan synthetic transport acceptance', () => {
     const focus = new Map<string, () => void>();
     vi.stubGlobal('window', { addEventListener: (name: string, callback: () => void) => focus.set(name, callback), removeEventListener: (name: string) => focus.delete(name) });
     const client = new TauriUsageClient(send, 1, listen, 1000); const events: UsageEvent[] = [];
-    let remove = await client.subscribeUsage(e => events.push(e)); expect(payloads.size).toBe(2);
+    let remove = await client.subscribeUsage(e => events.push(e)); expect(payloads.size).toBe(3);
     const scan: ScanSummary = { apiVersion: API_VERSION, jobId: 'background', providerId: 'fixture', state: 'succeeded', startedAt: '2026-10-05T10:00:00Z', finishedAt: '2026-10-05T10:00:01Z', error: null, rowsWritten: 1, snapshotsReplaced: 2 };
     payloads.get(SCAN_EVENT)!(scan); expect(events).toContainEqual({ kind: 'scan', scan });
-    expect(payloads.has(AUTO_COLLECTION_EVENT)).toBe(true); focus.get('focus')!();
+    expect(payloads.has(AUTO_COLLECTION_EVENT)).toBe(true); expect(payloads.has(TIMEZONE_EVENT)).toBe(true); focus.get('focus')!();
     await vi.advanceTimersByTimeAsync(1000); expect(events.filter(e => e.kind === 'resync')).toHaveLength(3);
     remove(); expect(vi.getTimerCount()).toBe(0); expect(payloads.size).toBe(0); expect(focus.size).toBe(0);
-    remove = await client.subscribeUsage(() => {}); remove(); expect(removed).toHaveBeenCalledTimes(4);
+    remove = await client.subscribeUsage(() => {}); remove(); expect(removed).toHaveBeenCalledTimes(6);
   });
   it('retries failed event attachment with polling and releases partial registrations', async () => {
     vi.useFakeTimers(); let attempts = 0; const remove = vi.fn();
     const subscribe: EventSubscriber = async name => { if (name === AUTO_COLLECTION_EVENT && attempts++ === 0) throw Error('unavailable'); return remove; };
     const send: CommandInvoker = async <T,>() => DEMO_API_INFO as T;
     const events: UsageEvent[] = []; const stop = await new TauriUsageClient(send, 1, subscribe, 1000).subscribeUsage(e => events.push(e));
-    await vi.advanceTimersByTimeAsync(1000); expect(attempts).toBe(2); expect(events.some(e => e.kind === 'resync')).toBe(true); stop(); expect(remove).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1000); expect(attempts).toBe(2); expect(events.some(e => e.kind === 'resync')).toBe(true); stop(); expect(remove).toHaveBeenCalledTimes(4);
   });
 });

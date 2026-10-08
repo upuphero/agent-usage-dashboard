@@ -1,4 +1,9 @@
-use crate::{mapping, settings::SettingsStore};
+use crate::{
+    mapping,
+    profile::TimezoneMode,
+    settings::SettingsStore,
+    timezone::{DetectionError, TimezoneMonitor},
+};
 use futures_util::FutureExt;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -24,6 +29,14 @@ struct ActiveJob {
     timezone: String,
     queued: ScanRecord,
     automatic: bool,
+    rebuild: bool,
+}
+/// Automatic and rebuild starts are accepted only while every provider slot is idle.
+#[derive(Clone, Copy)]
+enum Origin<'a> {
+    Manual,
+    Automatic(&'a SourceConfig),
+    Rebuild,
 }
 #[derive(Default)]
 struct TerminalCache {
@@ -54,6 +67,7 @@ pub struct Runtime {
     exit_ready: AtomicBool,
     emit: ScanEmitter,
     pub scheduler: OnceLock<Arc<crate::scheduler::Scheduler>>,
+    pub timezone: OnceLock<Arc<TimezoneMonitor>>,
 }
 impl Runtime {
     #[cfg(test)]
@@ -81,13 +95,14 @@ impl Runtime {
             exit_ready: AtomicBool::new(false),
             emit,
             scheduler: OnceLock::new(),
+            timezone: OnceLock::new(),
         })
     }
     pub async fn start_scan(
         self: &Arc<Self>,
         request: api::StartScanRequest,
     ) -> Result<api::StartScanResult, CoreError> {
-        self.start_scan_inner(request, None)
+        self.start_scan_inner(request, Origin::Manual)
             .await?
             .ok_or(CoreError::ScanBusy)
     }
@@ -102,14 +117,14 @@ impl Runtime {
                 provider_id: provider.into(),
                 timezone: timezone.into(),
             },
-            Some(config),
+            Origin::Automatic(config),
         )
         .await
     }
     async fn start_scan_inner(
         self: &Arc<Self>,
         request: api::StartScanRequest,
-        automatic: Option<&SourceConfig>,
+        origin: Origin<'_>,
     ) -> Result<Option<api::StartScanResult>, CoreError> {
         application::validate_timezone(&request.timezone)?;
         self.service.source(&request.provider_id)?;
@@ -127,15 +142,25 @@ impl Runtime {
         if !config.enabled {
             return Err(CoreError::ProviderDisabled);
         }
-        if let Some(expected) = automatic {
-            let settings = self.settings.as_ref().ok_or(CoreError::UnsupportedFilter)?;
-            let (_, timezone, auto) = settings.auto_config().await;
-            if !auto.enabled
-                || timezone != request.timezone
-                || expected.root_path != config.root_path
-                || !active.is_empty()
-            {
-                return Ok(None);
+        match origin {
+            Origin::Manual => {}
+            Origin::Automatic(expected) => {
+                let settings = self.settings.as_ref().ok_or(CoreError::UnsupportedFilter)?;
+                let (_, timezone, auto) = settings.auto_config().await;
+                if !auto.enabled
+                    || timezone != request.timezone
+                    || expected.root_path != config.root_path
+                    || !active.is_empty()
+                {
+                    return Ok(None);
+                }
+            }
+            Origin::Rebuild => {
+                // Re-check under the gate: a finished source, newer target or busy slot defers it.
+                let (provider, zone) = (&request.provider_id, &request.timezone);
+                if !active.is_empty() || !self.rebuild_allowed(provider, zone).await {
+                    return Ok(None);
+                }
             }
         }
         if let Some(job) = active.get_mut(&request.provider_id) {
@@ -144,6 +169,7 @@ impl Runtime {
             }
             // A user's joined task must survive turning automatic collection off.
             job.automatic = false;
+            job.rebuild = false;
             return Ok(Some(api::StartScanResult {
                 job_id: job.id.clone(),
             }));
@@ -169,7 +195,8 @@ impl Runtime {
                 cancellation: cancellation.clone(),
                 timezone: request.timezone.clone(),
                 queued: queued.clone(),
-                automatic: automatic.is_some(),
+                automatic: matches!(origin, Origin::Automatic(_)),
+                rebuild: matches!(origin, Origin::Rebuild),
             },
         );
         let runtime = self.clone();
@@ -186,18 +213,11 @@ impl Runtime {
             ))
             .catch_unwind()
             .await;
-            match outcome {
+            let (state, error) = match outcome {
                 Ok(Ok(record)) => {
-                    let succeeded = record.state == ScanState::Succeeded;
+                    let finished = (record.state, record.error);
                     runtime.publish_terminal(record, false).await;
-                    if succeeded {
-                        if let Some(settings) = &runtime.settings {
-                            // Keep the persisted retry marker if the rebuild or its acknowledgement fails.
-                            let _ = settings
-                                .complete_timezone_rescan(&request.provider_id, &request.timezone)
-                                .await;
-                        }
-                    }
+                    finished
                 }
                 failure => {
                     let mut failed = queued;
@@ -207,10 +227,23 @@ impl Runtime {
                         Ok(Err(error)) => error,
                         _ => CoreError::CollectionFailed,
                     });
+                    let finished = (failed.state, failed.error);
                     runtime.publish_terminal(failed, true).await;
+                    finished
                 }
-            }
+            };
+            // Acknowledge before releasing the slot, so the next rebuild step sees this result.
+            let rebuild = runtime
+                .active
+                .lock()
+                .await
+                .get(&request.provider_id)
+                .is_some_and(|job| job.rebuild);
+            runtime
+                .record_timezone_outcome(&request, state, error, rebuild)
+                .await;
             runtime.active.lock().await.remove(&request.provider_id);
+            runtime.wake_timezone(false);
         });
         let mut tasks = self.tasks.lock().await;
         tasks.retain(|task| !task.is_finished());
@@ -280,33 +313,237 @@ impl Runtime {
         }
         Ok(())
     }
-    /// Rebuild daily buckets from raw logs after correcting the legacy UTC default.
-    pub async fn rescan_changed_timezone(self: &Arc<Self>) -> Result<(), CoreError> {
-        let Some(settings) = &self.settings else {
-            return Ok(());
+    pub fn timezone_available(&self) -> bool {
+        self.settings.is_some() && self.timezone.get().is_some()
+    }
+    pub fn wake_timezone(&self, detect: bool) {
+        if let Some(monitor) = self.timezone.get() {
+            monitor.wake(detect);
+        }
+    }
+    /// Rebuild preconditions; start_scan_inner evaluates them again while holding the gate.
+    async fn rebuild_allowed(&self, provider: &str, zone: &str) -> bool {
+        let (Some(settings), Some(monitor)) = (&self.settings, self.timezone.get()) else {
+            return false;
         };
-        let providers: Vec<_> = self
-            .configs
+        let (_, _, auto) = settings.auto_config().await;
+        let target = settings.rebuild_target().await;
+        let done = settings.rebuilt().await.contains(provider);
+        !auto.enabled && !done && !monitor.rebuild_waiting() && target.as_deref() == Some(zone)
+    }
+    async fn enabled_providers(&self) -> Vec<String> {
+        self.configs
             .read()
             .await
             .iter()
             .filter(|(_, config)| config.enabled)
             .map(|(provider, _)| provider.clone())
-            .collect();
-        let Some(timezone) = settings.take_timezone_rescan(&providers).await else {
-            return Ok(());
+            .collect()
+    }
+    /// Startup check, before the first query can read the effective zone.
+    pub async fn sync_timezone(&self) {
+        let Some(monitor) = self.timezone.get() else {
+            return;
         };
-        if providers.is_empty() {
-            return settings.complete_timezone_rescan("", &timezone).await;
+        let detection = monitor.detect().await;
+        self.observe_system_timezone(detection).await;
+        self.apply_pending_timezone().await;
+    }
+    /// Records one detection; Follow mode only queues the zone for the protected boundary.
+    pub async fn observe_system_timezone(&self, detection: Result<String, DetectionError>) {
+        let (Some(settings), Some(monitor)) = (&self.settings, self.timezone.get()) else {
+            return;
+        };
+        let view = settings.timezone_view().await;
+        let follow = view.mode == TimezoneMode::FollowSystem;
+        monitor.observe(detection, follow, &view.effective);
+    }
+    /// Same gate as settings writes: running jobs keep their captured zone until they finish.
+    async fn apply_pending_timezone(&self) {
+        let (Some(settings), Some(monitor)) = (&self.settings, self.timezone.get()) else {
+            return;
+        };
+        let Some(target) = monitor.pending() else {
+            return;
+        };
+        let active = self.active.lock().await;
+        if self.closing.load(Ordering::Acquire) || !active.is_empty() {
+            return;
         }
-        for provider_id in providers {
-            self.start_scan(api::StartScanRequest {
-                provider_id,
-                timezone: timezone.clone(),
-            })
-            .await?;
+        // A storage failure keeps the target pending; the next tick retries.
+        if let Ok(changed) = settings.follow_system_timezone(&target).await {
+            monitor.applied(&target);
+            if changed {
+                monitor.reset_rebuild();
+                if let Some(scheduler) = self.scheduler.get() {
+                    scheduler.reconfigure(true);
+                }
+            }
         }
-        Ok(())
+    }
+    /// One native monitor step: apply a safe pending zone, acknowledge completion and start the
+    /// next serial rebuild. With Automatic collection on, its fresh scheduler scope rebuilds.
+    pub async fn drive_timezone(self: &Arc<Self>) {
+        let (Some(settings), Some(monitor)) = (&self.settings, self.timezone.get()) else {
+            return;
+        };
+        self.apply_pending_timezone().await;
+        let enabled = self.enabled_providers().await;
+        if let Ok(true) = settings.complete_rebuild_if_done(&enabled).await {
+            monitor.reset_rebuild();
+        }
+        let view = settings.timezone_view().await;
+        let (_, _, auto) = settings.auto_config().await;
+        if view.needs_rescan && !auto.enabled && monitor.retry_allowed(monitor.now()) {
+            let rebuilt = settings.rebuilt().await;
+            if let Some(provider) = enabled.into_iter().find(|id| !rebuilt.contains(id)) {
+                let request = api::StartScanRequest {
+                    provider_id: provider.clone(),
+                    timezone: view.effective,
+                };
+                match self.start_scan_inner(request, Origin::Rebuild).await {
+                    // A source disabled since this step began is no longer part of the rebuild.
+                    Ok(_) | Err(CoreError::ScanBusy | CoreError::ShuttingDown) => {}
+                    Err(CoreError::ProviderDisabled) => {}
+                    Err(error) => monitor.record_failure(&provider, error, false, true),
+                }
+            }
+        }
+        self.publish_timezone_status().await;
+    }
+    /// Any job may acknowledge the current target; only rebuild-owned failures move its backoff.
+    async fn record_timezone_outcome(
+        &self,
+        request: &api::StartScanRequest,
+        state: ScanState,
+        error: Option<CoreError>,
+        rebuild: bool,
+    ) {
+        let (Some(settings), Some(monitor)) = (&self.settings, self.timezone.get()) else {
+            return;
+        };
+        let (provider, zone) = (request.provider_id.as_str(), request.timezone.as_str());
+        if state == ScanState::Succeeded {
+            if settings.record_rebuild_success(provider, zone).await {
+                monitor.clear_error(provider);
+                let enabled = self.enabled_providers().await;
+                if let Ok(true) = settings.complete_rebuild_if_done(&enabled).await {
+                    monitor.reset_rebuild();
+                }
+            }
+        } else if settings.rebuild_target().await.as_deref() == Some(zone) {
+            let error = error.unwrap_or(CoreError::CollectionFailed);
+            let cancelled = state == ScanState::Cancelled;
+            monitor.record_failure(provider, error, cancelled, rebuild);
+        }
+    }
+    /// Status and its sequence are produced under one lock, so an older snapshot never wins.
+    pub async fn publish_timezone_status(&self) {
+        let (Some(settings), Some(monitor)) = (&self.settings, self.timezone.get()) else {
+            return;
+        };
+        let mut published = monitor.status_lock().await;
+        let status = self.timezone_status(settings, monitor).await;
+        if published.changed(&status) {
+            monitor.emit(published.next(status));
+        }
+    }
+    pub async fn get_timezone(&self) -> Result<api::TimezoneStatus, api::ApiError> {
+        let (Some(settings), Some(monitor)) = (&self.settings, self.timezone.get()) else {
+            return Err(mapping::error(CoreError::UnsupportedFilter));
+        };
+        let mut published = monitor.status_lock().await;
+        let status = self.timezone_status(settings, monitor).await;
+        Ok(published.next(status))
+    }
+    async fn timezone_status(
+        &self,
+        settings: &SettingsStore,
+        monitor: &TimezoneMonitor,
+    ) -> api::TimezoneStatus {
+        use api::TimezoneProviderState as Step;
+        let view = settings.timezone_view().await;
+        // Disabled sources are never part of a rebuild and are never read for it.
+        let enabled = if view.needs_rescan {
+            self.enabled_providers().await
+        } else {
+            vec![]
+        };
+        let rebuilt = settings.rebuilt().await;
+        let running = self.active.lock().await.clone();
+        let snapshot = monitor.snapshot();
+        let mut providers = vec![];
+        for id in enabled {
+            let job = running.get(&id);
+            let (state, job_id, error) = if rebuilt.contains(&id) {
+                (Step::Succeeded, None, None)
+            } else if let Some(job) = job.filter(|job| job.timezone == view.effective) {
+                (Step::Rebuilding, Some(job.id.clone()), None)
+            } else if let Some(error) = snapshot.errors.get(&id) {
+                (Step::Failed, None, Some(error.clone()))
+            } else {
+                (Step::Pending, None, None)
+            };
+            providers.push(api::TimezoneProviderStatus {
+                provider_id: id,
+                state,
+                job_id,
+                error,
+            });
+        }
+        let rebuilding = providers.iter().any(|p| p.state == Step::Rebuilding);
+        let rebuild = if !view.needs_rescan {
+            api::TimezoneRebuildState::Idle
+        } else if rebuilding {
+            api::TimezoneRebuildState::Rebuilding
+        } else if snapshot.retry_at > monitor.now() {
+            api::TimezoneRebuildState::Backoff
+        } else {
+            api::TimezoneRebuildState::Pending
+        };
+        let backoff = rebuild == api::TimezoneRebuildState::Backoff;
+        api::TimezoneStatus {
+            api_version: api::API_VERSION.into(),
+            sequence: String::new(),
+            revision: view.revision,
+            mode: view.mode.into(),
+            effective_timezone: view.effective,
+            system_timezone: snapshot.system,
+            detection_error: snapshot.detection_error,
+            pending_timezone: snapshot.pending,
+            rebuild,
+            next_retry_at: snapshot.retry_wall.filter(|_| backoff),
+            providers,
+        }
+    }
+    /// Mode write behind the scan gate; the OS read happens first because it may block briefly.
+    pub async fn update_timezone(
+        &self,
+        request: api::UpdateTimezoneRequest,
+    ) -> Result<api::TimezoneStatus, api::ApiError> {
+        let (Some(settings), Some(monitor)) = (&self.settings, self.timezone.get()) else {
+            return Err(mapping::error(CoreError::UnsupportedFilter));
+        };
+        let system = match request.mode {
+            api::TimezoneMode::FollowSystem => monitor.detect().await.ok(),
+            api::TimezoneMode::Fixed => None,
+        };
+        {
+            let active = self.active.lock().await;
+            if self.closing.load(Ordering::Acquire) {
+                return Err(mapping::error(CoreError::ShuttingDown));
+            }
+            let (zone, busy) = (system.as_deref(), !active.is_empty());
+            if settings.update_timezone(&request, zone, busy).await? {
+                monitor.reset_rebuild();
+                if let Some(scheduler) = self.scheduler.get() {
+                    scheduler.reconfigure(true);
+                }
+            }
+        }
+        // Re-detect under the saved mode: Fixed clears a queued change, Follow queues the latest.
+        monitor.wake(true);
+        self.get_timezone().await
     }
     pub async fn cancel_scan(&self, id: &str) -> Result<(), CoreError> {
         let scan = self.get_scan(id).await?;
@@ -345,10 +582,17 @@ impl Runtime {
             .settings
             .as_ref()
             .ok_or_else(|| mapping::error(CoreError::UnsupportedFilter))?;
-        let (result, configs) = store.update(request).await?;
+        let (result, configs, timezone_changed) = store.update(request).await?;
         *self.configs.write().await = configs;
         if let Some(scheduler) = self.scheduler.get() {
             scheduler.reconfigure(true);
+        }
+        if let Some(monitor) = self.timezone.get() {
+            if timezone_changed {
+                monitor.reset_rebuild();
+            }
+            // Enabled sources may have changed; a legacy zone choice also replaces a queued one.
+            monitor.wake(timezone_changed);
         }
         Ok(result)
     }
@@ -427,6 +671,11 @@ impl Runtime {
             let (_, _, previous) = store.auto_config().await;
             let enabled = request.config.enabled;
             store.update_auto(request).await?;
+            // The scheduler now owns any pending rebuild; the monitor's backoff no longer applies.
+            let owner_changed = enabled && !previous.enabled;
+            if let (true, Some(monitor)) = (owner_changed, self.timezone.get()) {
+                monitor.reset_rebuild();
+            }
             if !enabled {
                 for job in active.values().filter(|job| job.automatic) {
                     job.cancellation.cancel();
@@ -439,6 +688,8 @@ impl Runtime {
         if let Some(scheduler) = self.scheduler.get() {
             scheduler.wake();
         }
+        // Rebuild ownership moves between the scheduler and the timezone monitor.
+        self.wake_timezone(false);
         self.get_auto_collection().await
     }
     pub async fn remember_directory(
@@ -461,6 +712,9 @@ impl Runtime {
         self.closing.store(true, Ordering::Release);
         if let Some(scheduler) = self.scheduler.get() {
             scheduler.stop().await;
+        }
+        if let Some(monitor) = self.timezone.get() {
+            monitor.stop().await;
         }
         for job in self.active.lock().await.values() {
             job.cancellation.cancel();
@@ -510,6 +764,9 @@ impl Runtime {
         if let Some(scheduler) = self.scheduler.get() {
             scheduler.begin_stop();
         }
+        if let Some(monitor) = self.timezone.get() {
+            monitor.begin_stop();
+        }
         self.closing
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
@@ -532,6 +789,7 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile::DesktopProfile;
     use usage_core::memory::{FixedClock, MemoryRepository};
     struct Source;
     #[async_trait::async_trait]
@@ -726,30 +984,439 @@ mod tests {
             CoreError::ScanNotFound
         );
     }
-    #[tokio::test]
-    async fn timezone_migration_scans_only_enabled_sources_once_in_the_new_zone() {
-        let base = runtime();
+    type Log = Arc<std::sync::Mutex<Vec<(String, String)>>>;
+    /// Synthetic source: logs every read, waits while `hold` is set and fails while `fail` is set.
+    struct Controlled {
+        id: &'static str,
+        log: Log,
+        hold: Arc<AtomicBool>,
+        fail: Arc<AtomicBool>,
+    }
+    #[async_trait::async_trait]
+    impl UsageSource for Controlled {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor {
+                provider_id: self.id.into(),
+                ..Source.descriptor()
+            }
+        }
+        async fn detect(&self, config: &SourceConfig) -> Result<Detection, CoreError> {
+            Source.detect(config).await
+        }
+        async fn collect(
+            &self,
+            request: CollectRequest,
+            cancellation: CancellationToken,
+        ) -> Result<CollectionBatch, CoreError> {
+            self.log
+                .lock()
+                .unwrap()
+                .push((self.id.into(), request.timezone.clone()));
+            while self.hold.load(Ordering::Acquire) {
+                cancellation.check()?;
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            if self.fail.load(Ordering::Acquire) {
+                return Err(CoreError::CollectionFailed);
+            }
+            Ok(CollectionBatch {
+                snapshots: vec![snapshot(self.id, &request.timezone)],
+            })
+        }
+    }
+    fn snapshot(provider: &str, zone: &str) -> ReportSnapshot {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-10-04T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        ReportSnapshot {
+            key: SnapshotKey {
+                product_id: "claude-code".into(),
+                source_dataset_id: format!("{provider}-dataset"),
+                report_kind: ReportKind::Daily,
+                timezone: zone.into(),
+                scope: QueryScope::Standard,
+            },
+            provider_id: provider.into(),
+            origin_device_id: "device".into(),
+            revision: 0,
+            collected_at: at,
+            collection_started_at: at,
+            collector_version: "test".into(),
+            normalization_version: "test".into(),
+            coverage: Coverage {
+                state: CoverageState::Complete,
+                range: None,
+                observed_from: None,
+                observed_until: None,
+            },
+            warnings: vec![],
+            rows: vec![],
+        }
+    }
+    /// Controllable OS port; tests never read or change the computer's timezone.
+    struct Zone {
+        current: std::sync::Mutex<Result<String, DetectionError>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl crate::timezone::SystemTimezone for Zone {
+        fn detect(&self) -> Result<String, DetectionError> {
+            self.calls.fetch_add(1, Ordering::AcqRel);
+            self.current.lock().unwrap().clone()
+        }
+    }
+    struct Harness {
+        runtime: Arc<Runtime>,
+        zone: Arc<Zone>,
+        log: Log,
+        hold: Arc<AtomicBool>,
+        fail: Arc<AtomicBool>,
+        emitted: Arc<std::sync::Mutex<Vec<api::TimezoneStatus>>>,
+        directory: tempfile::TempDir,
+    }
+    impl Harness {
+        fn new(directory: tempfile::TempDir, profile: DesktopProfile, enabled: &[&str]) -> Self {
+            let log = Log::default();
+            let hold = Arc::new(AtomicBool::new(false));
+            let fail = Arc::new(AtomicBool::new(false));
+            let mut sources: Vec<Arc<dyn UsageSource>> = vec![];
+            let mut configs = BTreeMap::new();
+            for id in ["alpha", "beta", "gamma"] {
+                sources.push(Arc::new(Controlled {
+                    id,
+                    log: log.clone(),
+                    hold: hold.clone(),
+                    fail: fail.clone(),
+                }));
+                let config = SourceConfig {
+                    enabled: enabled.contains(&id),
+                    root_path: None,
+                };
+                configs.insert(id.to_owned(), config);
+            }
+            let service = Arc::new(UsageService::new(
+                Arc::new(MemoryRepository::default()),
+                Arc::new(FixedClock(
+                    chrono::DateTime::parse_from_rfc3339("2026-10-04T12:00:00Z")
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                )),
+                sources,
+            ));
+            let zone = Arc::new(Zone {
+                current: std::sync::Mutex::new(Ok(profile.timezone.clone())),
+                calls: Default::default(),
+            });
+            let store = Arc::new(SettingsStore::new(directory.path(), profile));
+            let emit: ScanEmitter = Arc::new(|_| {});
+            let runtime = Runtime::new_with_settings(service, configs, emit, Some(store));
+            let emitted = Arc::new(std::sync::Mutex::new(vec![]));
+            let sink = emitted.clone();
+            let monitor = TimezoneMonitor::new(
+                zone.clone(),
+                Arc::new(move |status| sink.lock().unwrap().push(status)),
+            );
+            runtime.timezone.set(monitor).ok().unwrap();
+            Self {
+                runtime,
+                zone,
+                log,
+                hold,
+                fail,
+                emitted,
+                directory,
+            }
+        }
+        fn monitor(&self) -> &Arc<TimezoneMonitor> {
+            self.runtime.timezone.get().unwrap()
+        }
+        fn system(&self, zone: Result<&str, DetectionError>) {
+            *self.zone.current.lock().unwrap() = zone.map(Into::into);
+        }
+        fn reads(&self) -> Vec<(String, String)> {
+            self.log.lock().unwrap().clone()
+        }
+        /// Waits until a spawned job is really inside collect, so holds and cancels are meaningful.
+        async fn reached(&self, expected: (String, String)) {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while !self.reads().contains(&expected) {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        async fn scan(&self, zone: &str) -> String {
+            self.runtime
+                .start_scan(job("alpha", zone))
+                .await
+                .unwrap()
+                .job_id
+        }
+        async fn status(&self) -> api::TimezoneStatus {
+            self.runtime.get_timezone().await.unwrap()
+        }
+        /// One deterministic monitor step without the background loop.
+        async fn tick(&self) -> api::TimezoneStatus {
+            let detection = self.monitor().detect().await;
+            self.runtime.observe_system_timezone(detection).await;
+            self.runtime.drive_timezone().await;
+            self.status().await
+        }
+        async fn settle(&self) -> api::TimezoneStatus {
+            self.runtime.wait_for_idle().await;
+            self.tick().await
+        }
+    }
+    fn prepared(directory: &tempfile::TempDir, mode: TimezoneMode, zone: &str) -> DesktopProfile {
+        let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
+        profile.timezone_mode = mode;
+        profile.timezone = zone.into();
+        profile
+    }
+    fn harness(mode: TimezoneMode, zone: &str, enabled: &[&str]) -> Harness {
         let directory = tempfile::tempdir().unwrap();
-        let mut profile = crate::profile::DesktopProfile::load_or_create(directory.path()).unwrap();
-        profile.timezone = "America/Phoenix".into();
+        let profile = prepared(&directory, mode, zone);
+        Harness::new(directory, profile, enabled)
+    }
+    fn job(provider: &str, zone: &str) -> api::StartScanRequest {
+        api::StartScanRequest {
+            provider_id: provider.into(),
+            timezone: zone.into(),
+        }
+    }
+    fn read(provider: &str, zone: &str) -> (String, String) {
+        (provider.into(), zone.into())
+    }
+    fn timezone_request(
+        revision: &str,
+        mode: api::TimezoneMode,
+        zone: Option<&str>,
+    ) -> api::UpdateTimezoneRequest {
+        api::UpdateTimezoneRequest {
+            expected_revision: revision.into(),
+            mode,
+            timezone: zone.map(Into::into),
+        }
+    }
+    #[tokio::test]
+    async fn follow_mode_rebuilds_enabled_sources_serially_without_enabling_auto() {
+        let (phoenix, tokyo) = ("America/Phoenix", "Asia/Tokyo");
+        let h = harness(TimezoneMode::FollowSystem, phoenix, &["alpha", "beta"]);
+        let status = h.tick().await;
+        assert_eq!(status.system_timezone.as_deref(), Some(phoenix));
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        h.hold.store(true, Ordering::Release);
+        h.system(Ok(tokyo));
+        let status = h.tick().await;
+        assert_eq!(status.effective_timezone, tokyo);
+        assert_eq!(status.revision, "2");
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Rebuilding);
+        assert_eq!(status.providers.len(), 2);
+        h.reached(read("alpha", tokyo)).await;
+        // Serial: the second source waits while the first rebuild is still collecting.
+        let status = h.tick().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Rebuilding);
+        assert_eq!(h.runtime.active.lock().await.len(), 1);
+        h.hold.store(false, Ordering::Release);
+        h.settle().await;
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        assert!(status.providers.is_empty());
+        // Serial, enabled-only and never relabelled: each source is re-read in the new zone.
+        let expected = [read("alpha", tokyo), read("beta", tokyo)];
+        assert_eq!(h.reads(), expected);
+        let settings = h.runtime.settings.as_ref().unwrap();
+        assert!(!settings.auto_config().await.2.enabled);
+        let emitted = h.emitted.lock().unwrap().clone();
+        let sequences: Vec<u64> = emitted
+            .iter()
+            .map(|s| s.sequence.parse().unwrap())
+            .collect();
+        assert!(sequences.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(emitted.iter().any(|s| s.effective_timezone == tokyo));
+    }
+    #[tokio::test]
+    async fn fixed_mode_records_but_ignores_system_changes() {
+        let h = harness(TimezoneMode::Fixed, "America/Phoenix", &["alpha"]);
+        h.system(Ok("Asia/Tokyo"));
+        let status = h.tick().await;
+        assert_eq!(status.mode, api::TimezoneMode::Fixed);
+        assert_eq!(status.effective_timezone, "America/Phoenix");
+        assert_eq!(status.system_timezone.as_deref(), Some("Asia/Tokyo"));
+        assert!(status.pending_timezone.is_none());
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        assert!(h.reads().is_empty());
+    }
+    #[tokio::test]
+    async fn failed_or_invalid_detection_keeps_the_last_valid_zone_and_retries() {
+        let h = harness(TimezoneMode::FollowSystem, "America/Phoenix", &[]);
+        for error in [DetectionError::Unavailable, DetectionError::Invalid] {
+            h.system(Err(error));
+            let status = h.tick().await;
+            assert_eq!(status.effective_timezone, "America/Phoenix");
+            assert_eq!(status.revision, "1");
+            assert!(status.detection_error.is_some());
+        }
+        h.system(Ok("UTC"));
+        let status = h.tick().await;
+        assert_eq!(status.effective_timezone, "UTC");
+        assert!(status.detection_error.is_none());
+    }
+    #[tokio::test]
+    async fn changes_during_a_scan_wait_and_rapid_changes_resolve_to_the_latest() {
+        let phoenix = "America/Phoenix";
+        let h = harness(TimezoneMode::FollowSystem, phoenix, &["alpha"]);
+        h.hold.store(true, Ordering::Release);
+        let manual = h.scan(phoenix).await;
+        for zone in ["Asia/Tokyo", "Europe/Paris", "UTC"] {
+            h.system(Ok(zone));
+            let status = h.tick().await;
+            assert_eq!(status.effective_timezone, phoenix);
+            assert_eq!(status.pending_timezone.as_deref(), Some(zone));
+        }
+        // The running job keeps its captured scope.
+        let jobs = h.runtime.active.lock().await.clone();
+        assert_eq!(jobs["alpha"].timezone, phoenix);
+        h.hold.store(false, Ordering::Release);
+        h.runtime.wait_for_idle().await;
+        let finished = h.runtime.get_scan(&manual).await.unwrap();
+        assert_eq!(finished.state, ScanState::Succeeded);
+        let status = h.tick().await;
+        assert_eq!(status.effective_timezone, "UTC");
+        assert_eq!(status.revision, "2");
+        assert!(status.pending_timezone.is_none());
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        let expected = [read("alpha", phoenix), read("alpha", "UTC")];
+        assert_eq!(h.reads(), expected);
+    }
+    #[tokio::test]
+    async fn cancelled_or_failed_rebuilds_keep_history_back_off_and_need_the_current_zone() {
+        let (phoenix, tokyo) = ("America/Phoenix", "Asia/Tokyo");
+        let h = harness(TimezoneMode::FollowSystem, phoenix, &["alpha"]);
+        h.scan(phoenix).await;
+        h.runtime.wait_for_idle().await;
+        h.hold.store(true, Ordering::Release);
+        h.system(Ok(tokyo));
+        let status = h.tick().await;
+        let rebuild = status.providers[0].job_id.clone().unwrap();
+        h.reached(read("alpha", tokyo)).await;
+        h.runtime.cancel_scan(&rebuild).await.unwrap();
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Backoff);
+        assert!(status.next_retry_at.is_some());
+        let step = status.providers[0].state;
+        assert_eq!(step, api::TimezoneProviderState::Failed);
+        // No immediate cancellation/retry loop.
+        assert!(h.runtime.active.lock().await.is_empty());
+        // A success in the previous zone never acknowledges the new target.
+        h.hold.store(false, Ordering::Release);
+        h.scan(phoenix).await;
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Backoff);
+        h.fail.store(true, Ordering::Release);
+        h.monitor().advance(300);
+        h.settle().await;
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Backoff);
+        assert!(h.runtime.active.lock().await.is_empty());
+        let repository = &h.runtime.service.repository;
+        let filter = SnapshotFilter::default();
+        let stored = repository.load_snapshots(filter).await.unwrap();
+        let zones: Vec<_> = stored.into_iter().map(|s| s.key.timezone).collect();
+        assert_eq!(zones, [phoenix]);
+        h.fail.store(false, Ordering::Release);
+        h.monitor().advance(120);
+        h.settle().await;
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        let reads = h.reads();
+        assert_eq!(reads.iter().filter(|read| read.1 == tokyo).count(), 3);
+    }
+    #[tokio::test]
+    async fn automatic_collection_owns_the_rebuild_when_enabled() {
+        let (id, tokyo, phoenix) = ("alpha", "Asia/Tokyo", "America/Phoenix");
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = prepared(&directory, TimezoneMode::FollowSystem, phoenix);
+        profile.auto_collection.enabled = true;
+        let h = Harness::new(directory, profile, &["alpha"]);
+        h.system(Ok(tokyo));
+        let status = h.tick().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Pending);
+        assert!(h.runtime.active.lock().await.is_empty());
+        let configs = h.runtime.configs.read().await.clone();
+        let (runtime, config) = (&h.runtime, &configs[id]);
+        let started = runtime.start_automatic_scan(id, tokyo, config).await;
+        assert!(started.unwrap().is_some());
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        assert_eq!(h.reads(), [read("alpha", tokyo)]);
+    }
+    #[tokio::test]
+    async fn no_enabled_sources_switch_the_zone_without_collection() {
+        let h = harness(TimezoneMode::FollowSystem, "America/Phoenix", &[]);
+        h.system(Ok("Asia/Tokyo"));
+        let status = h.tick().await;
+        assert_eq!(status.effective_timezone, "Asia/Tokyo");
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        assert!(h.reads().is_empty());
+    }
+    #[tokio::test]
+    async fn a_pending_rebuild_resumes_after_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = prepared(&directory, TimezoneMode::Fixed, "Asia/Tokyo");
         profile.timezone_needs_rescan = true;
-        let mut configs = base.configs.read().await.clone();
-        configs.insert("disabled".into(), SourceConfig::default());
-        let runtime = Runtime::new_with_settings(
-            base.service.clone(),
-            configs,
-            Arc::new(|_| {}),
-            Some(Arc::new(SettingsStore::new(directory.path(), profile))),
-        );
-        runtime.rescan_changed_timezone().await.unwrap();
-        let first = runtime.active.lock().await["fixture"].clone();
-        assert_eq!(first.timezone, "America/Phoenix");
-        assert_eq!(runtime.active.lock().await.len(), 1);
-        runtime.rescan_changed_timezone().await.unwrap();
-        assert_eq!(runtime.active.lock().await["fixture"].id, first.id);
-        runtime.shutdown().await;
-        runtime.rescan_changed_timezone().await.unwrap();
-        assert!(runtime.active.lock().await.is_empty());
+        profile.persist(directory.path()).unwrap();
+        let reopened = DesktopProfile::load_or_create(directory.path()).unwrap();
+        let h = Harness::new(directory, reopened, &["alpha"]);
+        h.tick().await;
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        assert_eq!(h.reads(), [read("alpha", "Asia/Tokyo")]);
+        let stored = DesktopProfile::load_or_create(h.directory.path()).unwrap();
+        assert!(!stored.timezone_needs_rescan);
+    }
+    #[tokio::test]
+    async fn switching_to_follow_during_a_scan_waits_for_the_safe_boundary() {
+        let (phoenix, tokyo) = ("America/Phoenix", "Asia/Tokyo");
+        let h = harness(TimezoneMode::Fixed, phoenix, &["alpha"]);
+        h.system(Ok(tokyo));
+        h.hold.store(true, Ordering::Release);
+        h.scan(phoenix).await;
+        let fixed = timezone_request("1", api::TimezoneMode::Fixed, Some("UTC"));
+        let busy = h.runtime.update_timezone(fixed).await.unwrap_err();
+        assert_eq!(busy.code, api::ErrorCode::ScanBusy);
+        let follow = timezone_request("1", api::TimezoneMode::FollowSystem, None);
+        let saved = h.runtime.update_timezone(follow).await.unwrap();
+        assert_eq!(saved.mode, api::TimezoneMode::FollowSystem);
+        assert_eq!(saved.effective_timezone, phoenix);
+        let status = h.tick().await;
+        assert_eq!(status.pending_timezone.as_deref(), Some(tokyo));
+        h.hold.store(false, Ordering::Release);
+        let status = h.settle().await;
+        assert_eq!(status.effective_timezone, tokyo);
+        h.runtime.shutdown().await;
+    }
+    #[tokio::test]
+    async fn the_native_loop_checks_at_start_and_stops_before_runtime_shutdown() {
+        let h = harness(TimezoneMode::FollowSystem, "America/Phoenix", &[]);
+        h.system(Ok("Asia/Tokyo"));
+        h.monitor().start(&h.runtime).await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while h.status().await.effective_timezone != "Asia/Tokyo" {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        h.runtime.shutdown().await;
+        assert!(h.runtime.is_exit_ready());
+        let calls = h.zone.calls.load(Ordering::Acquire);
+        h.system(Ok("Europe/Paris"));
+        h.runtime.wake_timezone(true);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(h.zone.calls.load(Ordering::Acquire), calls);
+        assert_eq!(h.status().await.effective_timezone, "Asia/Tokyo");
     }
 
     #[tokio::test]
