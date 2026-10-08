@@ -94,9 +94,16 @@ export function useAutoCollection(enabled: boolean) {
   return { query, save, cancel };
 }
 const sequenceOf = (status: TimezoneStatus | undefined) => { try { return status ? BigInt(status.sequence) : -1n; } catch { return -1n; } };
-/** Rebuilt data or a new shared revision makes zone-dependent views and revision-guarded editors stale (never 'api'). */
+/** Settings or Automatic collection data cached before the first status that disagrees with the host's shared revision or zone. */
+const predatesStatus = (cache: QueryClient, next: TimezoneStatus) => ['settings', 'auto'].some(name => {
+  const cached = cache.getQueryData<{ revision: string; timezone: string }>(['usage', name]);
+  return !!cached && (cached.revision !== next.revision || cached.timezone !== next.effectiveTimezone);
+});
+/** Rebuilt data or a new shared revision makes zone-dependent views and revision-guarded editors stale (never 'api').
+ * The first accepted status has nothing to compare with, so it reconciles caches loaded earlier against the host instead. */
 function invalidateTimezoneDependents(cache: QueryClient, previous: TimezoneStatus | undefined, next: TimezoneStatus) {
-  if (!previous || (previous.effectiveTimezone === next.effectiveTimezone && previous.revision === next.revision && previous.mode === next.mode && (previous.rebuild === 'idle' || next.rebuild !== 'idle'))) return;
+  const stale = previous ? previous.effectiveTimezone !== next.effectiveTimezone || previous.revision !== next.revision || previous.mode !== next.mode || (previous.rebuild !== 'idle' && next.rebuild === 'idle') : predatesStatus(cache, next);
+  if (!stale) return;
   void cache.invalidateQueries({ queryKey: ['usage'], predicate: query => ['settings', 'providers', 'overview', 'sessions', 'auto'].includes(String(query.queryKey[1])) });
 }
 /** Applies host timezone status in sequence order; older responses/events are ignored. Returns whether it was stored. */
@@ -107,16 +114,19 @@ export function acceptTimezoneStatus(cache: QueryClient, status: TimezoneStatus)
   invalidateTimezoneDependents(cache, previous, status);
   return true;
 }
+/** The same rules for getTimezone responses, which the query stores itself. Returns the status to keep. */
+export function resolveFetchedTimezone(cache: QueryClient, fetched: TimezoneStatus): TimezoneStatus {
+  // An event may have stored a newer status while this read was in flight; never regress.
+  const cached = cache.getQueryData<TimezoneStatus>(['usage', 'timezone']);
+  if (cached && sequenceOf(cached) >= sequenceOf(fetched)) return cached;
+  invalidateTimezoneDependents(cache, cached, fetched);
+  return fetched;
+}
 export function useTimezone(enabled: boolean) {
   const client = useUsageClient(); const cache = useQueryClient();
   const query = useQuery({ queryKey: ['usage', 'timezone'], enabled: enabled && !!client.getTimezone, queryFn: async () => {
     if (!client.getTimezone) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。');
-    const fetched = assertResponseVersion(await client.getTimezone());
-    // An event may have stored a newer status while this read was in flight; never regress.
-    const cached = cache.getQueryData<TimezoneStatus>(['usage', 'timezone']);
-    if (cached && sequenceOf(cached) >= sequenceOf(fetched)) return cached;
-    invalidateTimezoneDependents(cache, cached, fetched);
-    return fetched;
+    return resolveFetchedTimezone(cache, assertResponseVersion(await client.getTimezone()));
   } });
   const save = useMutation({ mutationFn: async (request: UpdateTimezoneRequest) => {
     if (!client.updateTimezone) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。');

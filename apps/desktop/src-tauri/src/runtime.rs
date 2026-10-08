@@ -985,10 +985,12 @@ mod tests {
         );
     }
     type Log = Arc<std::sync::Mutex<Vec<(String, String)>>>;
-    /// Synthetic source: logs every read, waits while `hold` is set and fails while `fail` is set.
+    /// Synthetic source: logs every read and its directory, waits while `hold` is set and fails
+    /// while `fail` is set.
     struct Controlled {
         id: &'static str,
         log: Log,
+        roots: Log,
         hold: Arc<AtomicBool>,
         fail: Arc<AtomicBool>,
     }
@@ -1012,6 +1014,8 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((self.id.into(), request.timezone.clone()));
+            let root = request.config.root_path.clone().unwrap_or_default();
+            self.roots.lock().unwrap().push((self.id.into(), root));
             while self.hold.load(Ordering::Acquire) {
                 cancellation.check()?;
                 tokio::time::sleep(Duration::from_millis(2)).await;
@@ -1068,6 +1072,7 @@ mod tests {
         runtime: Arc<Runtime>,
         zone: Arc<Zone>,
         log: Log,
+        roots: Log,
         hold: Arc<AtomicBool>,
         fail: Arc<AtomicBool>,
         emitted: Arc<std::sync::Mutex<Vec<api::TimezoneStatus>>>,
@@ -1075,22 +1080,35 @@ mod tests {
     }
     impl Harness {
         fn new(directory: tempfile::TempDir, profile: DesktopProfile, enabled: &[&str]) -> Self {
-            let log = Log::default();
-            let hold = Arc::new(AtomicBool::new(false));
-            let fail = Arc::new(AtomicBool::new(false));
-            let mut sources: Vec<Arc<dyn UsageSource>> = vec![];
-            let mut configs = BTreeMap::new();
-            for id in ["alpha", "beta", "gamma"] {
-                sources.push(Arc::new(Controlled {
-                    id,
-                    log: log.clone(),
-                    hold: hold.clone(),
-                    fail: fail.clone(),
-                }));
+            let configured = ["alpha", "beta", "gamma"].map(|id| {
                 let config = SourceConfig {
                     enabled: enabled.contains(&id),
                     root_path: None,
                 };
+                (id, config)
+            });
+            Self::with_sources(directory, profile, configured.into())
+        }
+        /// One source per entry; settings saves need the profile's own provider IDs.
+        fn with_sources(
+            directory: tempfile::TempDir,
+            profile: DesktopProfile,
+            configured: Vec<(&'static str, SourceConfig)>,
+        ) -> Self {
+            let log = Log::default();
+            let roots = Log::default();
+            let hold = Arc::new(AtomicBool::new(false));
+            let fail = Arc::new(AtomicBool::new(false));
+            let mut sources: Vec<Arc<dyn UsageSource>> = vec![];
+            let mut configs = BTreeMap::new();
+            for (id, config) in configured {
+                sources.push(Arc::new(Controlled {
+                    id,
+                    log: log.clone(),
+                    roots: roots.clone(),
+                    hold: hold.clone(),
+                    fail: fail.clone(),
+                }));
                 configs.insert(id.to_owned(), config);
             }
             let service = Arc::new(UsageService::new(
@@ -1120,6 +1138,7 @@ mod tests {
                 runtime,
                 zone,
                 log,
+                roots,
                 hold,
                 fail,
                 emitted,
@@ -1134,6 +1153,10 @@ mod tests {
         }
         fn reads(&self) -> Vec<(String, String)> {
             self.log.lock().unwrap().clone()
+        }
+        /// The directory each read used; empty for a source's default location.
+        fn roots(&self) -> Vec<(String, String)> {
+            self.roots.lock().unwrap().clone()
         }
         /// Waits until a spawned job is really inside collect, so holds and cancels are meaningful.
         async fn reached(&self, expected: (String, String)) {
@@ -1332,6 +1355,82 @@ mod tests {
         assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
         let reads = h.reads();
         assert_eq!(reads.iter().filter(|read| read.1 == tokyo).count(), 3);
+    }
+    #[tokio::test]
+    async fn a_source_moved_to_a_new_directory_is_rebuilt_from_it_before_completion() {
+        use api::TimezoneProviderState as Step;
+        let (phoenix, tokyo) = ("America/Phoenix", "Asia/Tokyo");
+        let [claude, codex, _] = crate::profile::PROVIDERS;
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = prepared(&directory, TimezoneMode::FollowSystem, phoenix);
+        for id in [claude, codex] {
+            let mut provider = profile.provider(id).unwrap();
+            provider.enabled = true;
+            profile.set_provider(id, provider).unwrap();
+        }
+        let dataset = profile.claude_dataset_id.clone();
+        let configs = profile.configs();
+        let configured = crate::profile::PROVIDERS.map(|id| (id, configs[id].clone()));
+        let h = Harness::with_sources(directory, profile, configured.into());
+        let steps = |status: api::TimezoneStatus| -> Vec<_> {
+            status.providers.into_iter().map(|p| p.state).collect()
+        };
+        // Automatic collection stays off: A is rebuilt in the new zone, then B fails and backs off.
+        h.hold.store(true, Ordering::Release);
+        h.system(Ok(tokyo));
+        h.tick().await;
+        h.reached(read(claude, tokyo)).await;
+        h.hold.store(false, Ordering::Release);
+        h.runtime.wait_for_idle().await;
+        h.fail.store(true, Ordering::Release);
+        h.tick().await;
+        h.runtime.wait_for_idle().await;
+        let status = h.status().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Backoff);
+        assert_eq!(steps(status), [Step::Succeeded, Step::Failed]);
+        // With no scan running, saving A unchanged keeps its progress; a new directory withdraws it.
+        let save = |revision: &str, directory_ref: Option<String>| api::UpdateSettingsRequest {
+            expected_revision: revision.into(),
+            timezone: tokyo.into(),
+            providers: vec![api::ProviderSettingsUpdate {
+                provider_id: claude.into(),
+                enabled: true,
+                directory_ref,
+            }],
+        };
+        h.runtime.update_settings(save("2", None)).await.unwrap();
+        assert_eq!(steps(h.status().await), [Step::Succeeded, Step::Failed]);
+        let logs = h.directory.path().join("moved").join("projects");
+        std::fs::create_dir_all(&logs).unwrap();
+        let moved = h.runtime.remember_directory(claude, logs).await.unwrap();
+        h.runtime
+            .update_settings(save("3", Some(moved.directory_ref)))
+            .await
+            .unwrap();
+        assert_eq!(steps(h.status().await), [Step::Pending, Step::Failed]);
+        // B succeeding is not enough while A has not been read from its new directory.
+        h.fail.store(false, Ordering::Release);
+        h.runtime.start_scan(job(codex, tokyo)).await.unwrap();
+        h.runtime.wait_for_idle().await;
+        let status = h.status().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Backoff);
+        assert_eq!(steps(status), [Step::Pending, Step::Succeeded]);
+        let stored = DesktopProfile::load_or_create(h.directory.path()).unwrap();
+        assert!(stored.timezone_needs_rescan);
+        // After the backoff, the serial rebuild reads A from the new directory and completes.
+        h.monitor().advance(60);
+        h.settle().await;
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        let stored = DesktopProfile::load_or_create(h.directory.path()).unwrap();
+        assert!(!stored.timezone_needs_rescan);
+        assert_eq!(stored.claude_dataset_id, dataset);
+        let reads = [claude, codex, codex, claude].map(|id| read(id, tokyo));
+        assert_eq!(h.reads(), reads);
+        // Only the last read used a custom directory: A's new one.
+        let roots = h.roots();
+        assert!(roots[..3].iter().all(|(_, root)| root.is_empty()));
+        assert_eq!(roots[3], read(claude, &stored.claude_root_path.unwrap()));
     }
     #[tokio::test]
     async fn automatic_collection_owns_the_rebuild_when_enabled() {

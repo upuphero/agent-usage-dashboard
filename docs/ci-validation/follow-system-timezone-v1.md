@@ -2,6 +2,8 @@
 
 日期：America/Phoenix 2026-10-07。基线应用 0.0.7 / API 1.2.0 / profile v4；本分支升级为应用 **0.0.8 / API 1.3.0 / profile v5**，对应 [T10](../coordination/TODO_GUIDE.md#t10)。本记录只覆盖本地实现与本机可运行的检查；未提交、未推送、未运行远程 CI，没有新包。既有 0.0.7 的 CI/安装证据不能作为本次功能的验证证据。
 
+> 后续：本分支已作为 PR #1 推送，评审提交 `dc87465` 的 CI 全部通过；第一轮评审的两项修正、回归测试和实际验证结果见文末“PR #1 评审修正”。以下各节保留当时的验证记录，行为规则中受修正影响之处已注明。
+
 ## 行为与边界
 
 - **两种持久模式**：`follow-system`（新配置默认）和 `fixed`（用户选择并经校验的 IANA 时区）。profile 的 `timezone` 始终是当前**生效统计时区**，`timezoneMode` 只决定由谁更新它；查询、手动/自动/重建扫描都使用这个生效时区。
@@ -18,7 +20,7 @@
    - 自动采集**关闭**时，时区监控任务按来源串行启动现有完整扫描（同一 `run_scan`/完整快照替换管线），一次只占用一个扫描槽位；**不会**开启自动采集。
    - 自动采集**开启**时，调度器的新时区范围没有基线，会按其串行/限流规则完整扫描每个已启用来源，监控任务不再重复扫描。
    - 只读取已启用来源；没有已启用来源时只更新时区，不启动任何采集。
-4. 只有“当前目标时区”的成功扫描可确认对应来源；全部已启用来源确认后清除持久标记。旧时区的成功任务（例如过期页面发起的旧时区扫描）不能确认新目标。
+4. 只有“当前目标时区”的成功扫描可确认对应来源；全部已启用来源确认后清除持久标记。旧时区的成功任务（例如过期页面发起的旧时区扫描）不能确认新目标。确认也绑定来源目录：重建期间更换某来源的目录会撤销该来源的确认，须按新目录重新采集，其他来源不受影响（PR #1 评审修正）。
 5. 重建失败或取消保留成功历史与旧时区快照；重建自有任务失败后按 60→120→240→480→900 秒退避，取消至少等待 5 分钟，避免立即取消/重试循环。启动下一个重建任务前，在扫描门禁内再次确认：当前目标未变、该来源尚未完成、没有待切换目标或退避、自动采集仍关闭且没有活动任务；期间被关闭的来源直接跳过。持久标记在重启后仍在，下次启动继续重建。退出时先停止时区监控与调度器，再取消/回收任务。
 6. 状态中的 `backoff`/`nextRetryAt` 只描述时区监控自有的重建；自动采集开启并接管重建时，监控清除自己的退避，重试时机以“自动采集”状态（退避/下次检查）为准，时区状态显示为 pending 或 rebuilding。
 
@@ -79,3 +81,51 @@
 - Windows 通过 WinRT Calendar 读取时区，个别系统可能返回 CLDR 旧拼写（已规范化）；运行中改时区是否立即反映需真机确认。
 - 重建按来源串行；大量日志时完整重建耗时与手动完整扫描相同（尚无增量采集，见 T7）。
 - 演示模式只有 America/Phoenix 合成数据；模拟系统时区可用于界面验收，但其他时区没有演示数据。
+
+## PR #1 评审修正
+
+PR #1（`feat/follow-system-timezone` → `dev`）评审提交 `dc87465` 的 CI run [37729557122](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37729557122) 五个 jobs（validate/contracts-dashboard、validate/core-adapters、Windows x64 与 macOS ARM64 package、collect）全部成功。这是修正**之前**代码的证据；以下修正需由推送后重新运行的同一 CI 验证。
+
+### 发现 1：首个时区状态不校正已缓存的设置
+
+- **问题**：`invalidateTimezoneDependents()` 在没有上一份时区状态时直接返回。若“设置”已按 revision 1 / America/Phoenix 缓存，首个宿主状态是 revision 2 / Asia/Tokyo，状态被接受但“设置”不刷新：来源设置保存一直带旧 revision 并返回 `SETTINGS_CONFLICT`；后台重新同步不含“设置”，之后内容不变的状态也不会再刷新它。
+- **修正**：首个被接受的状态没有上一状态可比，改为用宿主状态校正此前已缓存的“设置”和“自动采集”数据。任一项的 revision 或时区与宿主不一致，即按一次正常的时区/revision 变化使依赖查询失效（settings、providers、overview、sessions、auto，从不含 api）；全部一致则不失效。事件（`acceptTimezoneStatus`）与 `getTimezone` 响应（提取出的 `resolveFetchedTimezone`）使用同一判断；较旧或相同 sequence 仍被忽略且不触发失效；之后内容不变的状态不会再次失效，不形成刷新循环。
+
+### 发现 2：更换来源目录后仍保留旧的重建确认
+
+- **问题**：重建确认只按来源 ID 记录，`commit()` 只在生效时区变化时清空。自动采集关闭、A/B 待重建时，A 成功、B 失败进入退避；无扫描时把 A 改到新目录，A 仍记为已重建；B 成功后持久标记被清除，A 的新目录从未按新时区采集。
+- **修正**：`SettingsStore::commit()`（所有设置写入的唯一持久化点）只保留目录（即扫描捕获的 `root_path`）前后相同来源的确认；时区变化仍清空全部。只撤销受影响的来源，其他来源的有效进度保留；保存未变的目录、或重新选择同一文件夹（规范化路径相同）不丢弃进度。来源设置写入仍在原扫描门禁内：有活动扫描时拒绝，而任务在离开活动槽位之前记录确认，二者不会交错。不新建 dataset/device 身份、不清历史、不改完整快照替换语义。现有串行重建随后按新配置采集该来源，所有已启用来源确认后才清除持久标记；自动采集开启时调度器的范围本身包含目录，同样会重新采集。
+
+### 回归测试
+
+| 位置 | 覆盖 |
+| --- | --- |
+| `Timezone.test.tsx`：首个状态校正矩阵（新增） | 事件与 `getTimezone` 两条路径 × 首个状态之前的 5 种缓存：旧 revision 与旧时区、仅时区不同、仅 revision 不同（自动采集写入）、已一致、无缓存。不一致时依赖查询全部失效且不含 api，一致时不失效；即使旧数据仍在缓存中（刷新尚未完成或失败），随后 3 个内容不变的状态也不再失效（只撤销修正或改为每个状态都校正，此测试均失败）；相同或较旧 sequence 被拒绝 |
+| `Timezone.test.tsx`：Mock 宿主端到端（新增） | “设置”以 revision 2 / Phoenix 缓存后系统时区改为 Tokyo（revision 3）：首个状态使“设置”失效，旧 revision 的保存确实返回 `SETTINGS_CONFLICT`；刷新后为 revision 3 / Tokyo 且保存成功；3 次轮询不再失效 |
+| `Timezone.test.tsx`：既有排序测试 | 全部断言保留；其 settings/auto 种子由无字段的占位对象改为与首个状态一致的真实 DTO（即“已一致的初始快照”） |
+| `settings.rs`：`a_new_directory_withdraws_only_that_sources_rebuild_acknowledgement`（新增） | 保存相同目录、重新选择同一文件夹均保留进度；A、B 均已确认时只改 A 的目录 → 只撤销 A、保留 B；A 再次成功前完成判断为 false 且持久标记仍在，之后完成；时区与 dataset 身份不变 |
+| `runtime.rs`：`a_source_moved_to_a_new_directory_is_rebuilt_from_it_before_completion`（新增） | 自动采集关闭：A 重建成功、B 失败退避；无扫描时保存未变设置，A 仍为成功；改 A 的目录 → A 待重建、B 失败；B 手动成功后仍未完成且持久标记仍在；退避结束后串行重建从 A 的新目录读取，然后完成；dataset 身份不变 |
+
+测试 Harness 新增 `with_sources()`（可使用 profile 中真实的来源 ID，使设置保存生效），并记录每次读取使用的目录；原有测试的构造和行为不变。
+
+### 本次本地验证（实际结果）
+
+| 检查 | 环境 | 结果 |
+| --- | --- | --- |
+| ESLint / `tsc --noEmit` / 生产 build | Windows，Dropbox 外的镜像目录，锁定 Node 24.19.0 / pnpm 9.15.0 | 通过 |
+| Vitest | 同上 | 14 个文件 90 项通过（原 88 项 + 新增 2 项） |
+| Node 脚本 / Adapter Node·SQL | 同上 | 10 项、6 项通过 |
+| 契约漂移 / 版本一致性 | 同上 | 通过（API 1.3.0 与生成类型未变；0.0.8） |
+| 依赖边界 | 同上，图数据来自 WSL | 通过；改用锁定 1.91.1 工具链在 WSL 生成的真实 `cargo metadata --no-deps --offline`，不再使用按 Cargo.toml 手工生成的等价数据 |
+| `cargo fmt --all --check` | WSL Ubuntu 24.04，`rust-toolchain.toml` 锁定的 1.91.1 | 通过（整个工作区，含 usage-desktop） |
+| 桌面宿主模块编译与单元测试 | 同上；仅用于验证、不提交的 crate，原样编译 `mapping`/`profile`/`runtime`/`scheduler`/`settings`/`timezone` 及其 `#[cfg(test)]` 测试（WSL 没有 GTK/WebKit，无法构建 Tauri 本体） | 54 项全部通过，含 2 项新增和既有的扫描中拒绝写入、重启恢复、失败/取消保留历史与退避测试；runtime/settings/timezone 测试连续重复 20 次，0 失败 |
+| 严格 clippy（`--all-targets -- -D warnings`） | 同上（仅上述模块；验证 crate 允许 dead_code） | 通过 |
+| 回归测试有效性 | 只撤销修正后重跑 | 前端 2 项、Rust 2 项新增测试均失败；恢复修正后通过 |
+
+### 仍需 Windows/macOS CI 与真机
+
+- 推送后 PR #1 自动重跑的现有 CI：两平台完整 `usage-desktop`（含 Tauri 及 `lib.rs`/`commands.rs`/`export.rs`/`composition.rs`）的编译与默认测试、严格 clippy、ignored native 测试、安装/解压及安装后 native 测试，以及 Linux core/adapters 测试与 clippy。本地 WSL 只是 Linux 上对上述模块的验证，不能代替两平台的原生结果。
+- 原有真机项目不变（见“未验证与两平台出口”）。另建议真机补测：自动采集关闭、重建中某来源失败时更换另一来源的目录，确认该来源按新目录重建后才显示完成。
+- 残留边界（与修正前相同，未扩大改动）：首个状态到达时，若“设置”的首次读取仍在进行、尚无缓存，则无可校正的数据；该读取若恰好早于一次时区切换，会以旧 revision 落入缓存。宿主在首个查询前已同步系统时区，有启用来源时重建结束也会刷新“设置”，窗口很小；即便发生，保存会得到 `SETTINGS_CONFLICT`，点击“重新读取”即可恢复。
+
+本次未读取私人日志、未更改本机时区、未在 Windows 安装 MSVC/SDK、未修改 CI。WSL 中的 rustup 依据仓库 `rust-toolchain.toml` 自动安装了锁定的 1.91.1 工具链，并按 Cargo.lock 下载了构建依赖，均位于 WSL 用户目录。

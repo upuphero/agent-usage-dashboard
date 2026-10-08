@@ -56,7 +56,7 @@
 
 - 能力 `timezone-follow-system`：`getTimezone()` 无参数，返回 `TimezoneStatus`；`updateTimezone({expectedRevision,mode,timezone})` 独立保存模式。`mode` 为 `follow-system` 或 `fixed`；fixed 必须带有效 IANA 时区（宿主规范化别名），follow-system 必须为 null，否则 INVALID_QUERY。共享 Settings revision，冲突 SETTINGS_CONFLICT；固定模式在活动扫描中更换时区返回 SCAN_BUSY 且不写入；切换为跟随系统可随时保存，检测到的时区在无活动扫描时再应用。
 - `TimezoneStatus`：十进制 `sequence`（单调递增；客户端忽略低于已应用值的响应或事件）、`revision`、`mode`、`effectiveTimezone`（查询/扫描唯一使用的时区）、`systemTimezone`（最后一次成功检测）、`detectionError`、`pendingTimezone`（跟随模式下等待安全边界的目标）、`rebuild`（idle/pending/rebuilding/backoff）、`nextRetryAt`（UTC RFC3339）以及仅已启用来源的 `providers`（pending/rebuilding/succeeded/failed、jobId、error）。`TIMEZONE_EVENT = usage://timezone-updated` 载荷相同，内容不变时不重复发送。
-- 生效时区变化（系统检测或固定选择）时 `settingsRevision+1`，持久标记需要重建；从原始日志重新生成该时区的 Daily/Session 快照，不重新分桶已有 Daily，旧时区快照保留。只有当前目标时区的成功扫描能确认对应来源。
+- 生效时区变化（系统检测或固定选择）时 `settingsRevision+1`，持久标记需要重建；从原始日志重新生成该时区的 Daily/Session 快照，不重新分桶已有 Daily，旧时区快照保留。只有当前目标时区的成功扫描能确认对应来源；重建期间更换某来源的目录会撤销该来源的确认，须按新目录重新采集。
 - 旧 `updateSettings` 不变：`timezone` 与生效时区相同（含别名）时不改变模式；不同则表示固定为该时区并触发重建。旧服务不提供该能力，新客户端不发送新命令/参数，并回退到原时区选择器。profile v5 增加 `timezoneMode`；v1–v4 迁移为 fixed 并保留已保存时区，旧宿主拒绝读取 v5。
 
 ## 数据端必须遵循

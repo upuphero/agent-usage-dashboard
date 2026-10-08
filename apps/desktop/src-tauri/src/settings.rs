@@ -22,7 +22,8 @@ struct PendingDirectory {
 struct State {
     profile: DesktopProfile,
     pending: BTreeMap<String, PendingDirectory>,
-    /// Enabled sources already rebuilt in the current effective zone; cleared when it changes.
+    /// Enabled sources already rebuilt in the current effective zone from their current directory;
+    /// cleared when the zone changes, and per source when its directory changes.
     rebuilt: BTreeSet<String>,
 }
 pub struct TimezoneView {
@@ -208,7 +209,8 @@ impl SettingsStore {
         committed.map_err(mapping::error)?;
         Ok(changed)
     }
-    /// Atomic persistence of the next profile; any effective-zone change restarts rebuild progress.
+    /// Atomic persistence of the next profile; any effective-zone change restarts rebuild progress,
+    /// and a source whose directory changes must be rebuilt again from the new one.
     async fn commit(&self, state: &mut State, next: DesktopProfile) -> Result<(), CoreError> {
         let write = next.clone();
         let directory = self.directory.clone();
@@ -218,6 +220,14 @@ impl SettingsStore {
         if next.timezone != state.profile.timezone {
             state.rebuilt.clear();
         }
+        // The directory is the scope a scan captures; unaffected sources keep their progress.
+        let (before, after) = (state.profile.configs(), next.configs());
+        let root = |configs: &BTreeMap<String, SourceConfig>, id: &str| {
+            configs.get(id).map(|config| config.root_path.clone())
+        };
+        state
+            .rebuilt
+            .retain(|id| root(&before, id) == root(&after, id));
         state.profile = next;
         Ok(())
     }
@@ -484,6 +494,56 @@ mod tests {
         assert_eq!(completed.settings_revision, 1);
         assert!(store.rebuild_target().await.is_none());
         assert!(!store.record_rebuild_success(PROVIDER, zone).await);
+    }
+    #[tokio::test]
+    async fn a_new_directory_withdraws_only_that_sources_rebuild_acknowledgement() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
+        let zone = "Asia/Tokyo";
+        profile.timezone = zone.into();
+        profile.timezone_needs_rescan = true;
+        let dataset = profile.claude_dataset_id.clone();
+        let store = SettingsStore::new(directory.path(), profile);
+        let codex = "ccusage.codex";
+        let enabled = [PROVIDER.to_owned(), codex.to_owned()];
+        let logs = |name: &str| {
+            let path = directory.path().join(name).join("projects");
+            std::fs::create_dir_all(&path).unwrap();
+            path
+        };
+        let save = |revision: &str, directory_ref: &str| api::UpdateSettingsRequest {
+            expected_revision: revision.into(),
+            timezone: zone.into(),
+            providers: vec![api::ProviderSettingsUpdate {
+                provider_id: PROVIDER.into(),
+                enabled: true,
+                directory_ref: Some(directory_ref.into()),
+            }],
+        };
+        let first = store.remember_directory(logs("first")).await.unwrap();
+        store.update(save("1", &first.directory_ref)).await.unwrap();
+        assert!(store.record_rebuild_success(PROVIDER, zone).await);
+        // Saving the same directory, or choosing the same folder again, keeps its progress.
+        store.update(save("2", &first.directory_ref)).await.unwrap();
+        let again = store.remember_directory(logs("first")).await.unwrap();
+        store.update(save("3", &again.directory_ref)).await.unwrap();
+        assert!(store.record_rebuild_success(codex, zone).await);
+        let both = BTreeSet::from([PROVIDER.to_owned(), codex.to_owned()]);
+        assert_eq!(store.rebuilt().await, both);
+        // Another directory withdraws only that source; the other keeps its valid progress.
+        let moved = store.remember_directory(logs("moved")).await.unwrap();
+        store.update(save("4", &moved.directory_ref)).await.unwrap();
+        assert_eq!(store.rebuilt().await, BTreeSet::from([codex.to_owned()]));
+        assert!(!store.complete_rebuild_if_done(&enabled).await.unwrap());
+        let reopened = DesktopProfile::load_or_create(directory.path()).unwrap();
+        assert!(reopened.timezone_needs_rescan);
+        // Completion needs a success after the change.
+        assert!(store.record_rebuild_success(PROVIDER, zone).await);
+        assert!(store.complete_rebuild_if_done(&enabled).await.unwrap());
+        let completed = DesktopProfile::load_or_create(directory.path()).unwrap();
+        assert!(!completed.timezone_needs_rescan);
+        assert_eq!(completed.timezone, zone);
+        assert_eq!(completed.claude_dataset_id, dataset);
     }
     #[tokio::test]
     async fn no_enabled_sources_complete_a_rebuild_without_collection() {

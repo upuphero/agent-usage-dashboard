@@ -4,10 +4,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TimezoneSettings, timezoneOptions, timezoneRequest } from './TimezoneSettings';
 import { TimezoneNotice } from './TimezoneNotice';
-import { acceptTimezoneStatus, applyBackgroundEvent } from './useUsage';
+import { acceptTimezoneStatus, applyBackgroundEvent, resolveFetchedTimezone } from './useUsage';
 import { I18nProvider } from '../i18n/I18nContext';
 import { apiError } from '../api/protocol';
-import { API_VERSION, type TimezoneStatus } from '../api/generated/usage';
+import { API_VERSION, type AutoCollectionStatus, type SettingsResult, type TimezoneStatus } from '../api/generated/usage';
 import { App } from '../app/App';
 import { UsageProvider } from '../app/UsageContext';
 import { MockUsageClient } from '../api/transports/mock/MockUsageClient';
@@ -19,11 +19,18 @@ const status: TimezoneStatus = { apiVersion: API_VERSION, sequence: '10', revisi
 const render = (language: 'zh' | 'en', node: ReactNode) => renderToStaticMarkup(<I18nProvider initialLanguage={language}>{node}</I18nProvider>);
 const dependents = ['settings', 'providers', 'overview', 'sessions', 'auto'];
 const checkedMode = (html: string) => /<input(?=[^>]*checked="")[^>]*value="([^"]+)"/.exec(html)?.[1];
+const settingsAt = (revision: string, timezone: string): SettingsResult => ({ apiVersion: API_VERSION, revision, timezone, providers: [], collectionNotice: '', directoryChangePolicy: 'preserve-dataset' });
+const autoAt = (revision: string, timezone: string): AutoCollectionStatus => ({ apiVersion: API_VERSION, revision, timezone, config: { enabled: false, intervalMinutes: 5 }, providers: [] });
+const invalidatedIn = (cache: QueryClient) => ['api', ...dependents].filter(name => cache.getQueryState(['usage', name])?.isInvalidated);
+/** What useTimezone's query does with a getTimezone response: resolve it, then store the result. */
+const fetchedInto = (cache: QueryClient, fetched: TimezoneStatus) => { const kept = resolveFetchedTimezone(cache, fetched); cache.setQueryData(['usage', 'timezone'], kept); return kept === fetched; };
 
 describe('timezone status cache ordering and invalidation', () => {
   it('ignores older sequences and invalidates only when zone, revision, mode or a finished rebuild changes data', () => {
     const cache = new QueryClient();
-    const seed = () => { for (const name of ['api', ...dependents]) cache.setQueryData(['usage', name], { marker: name }); };
+    // Revision-guarded editors hold the same shared revision and zone as the first status, as when they load together.
+    const seeded = (name: string) => name === 'settings' ? settingsAt('4', 'America/Phoenix') : name === 'auto' ? autoAt('4', 'America/Phoenix') : { marker: name };
+    const seed = () => { for (const name of ['api', ...dependents]) cache.setQueryData(['usage', name], seeded(name)); };
     const invalidated = () => ['api', ...dependents].filter(name => cache.getQueryState(['usage', name])?.isInvalidated);
     const next = (change: Partial<TimezoneStatus>) => { const current = cache.getQueryData<TimezoneStatus>(['usage', 'timezone'])!; return { ...current, ...change, sequence: (BigInt(current.sequence) + 1n).toString() }; };
     seed();
@@ -51,6 +58,53 @@ describe('timezone status cache ordering and invalidation', () => {
     expect(cache.getQueryData<TimezoneStatus>(['usage', 'timezone'])?.effectiveTimezone).toBe('UTC');
     expect(cache.getQueryState(['usage', 'overview'])?.isInvalidated).toBe(true);
     expect(cache.getQueryState(['usage', 'api'])?.isInvalidated).toBe(false); cache.clear();
+  });
+  it('reconciles Settings and Automatic collection cached before the first status, once, for events and getTimezone alike', () => {
+    const tokyo: TimezoneStatus = { ...status, sequence: '1', revision: '5', effectiveTimezone: 'Asia/Tokyo', systemTimezone: 'Asia/Tokyo' };
+    const cases: { settings?: SettingsResult; auto?: AutoCollectionStatus; stale: boolean }[] = [
+      { settings: settingsAt('4', 'America/Phoenix'), stale: true }, // an older shared revision and zone
+      { settings: settingsAt('5', 'America/Phoenix'), auto: autoAt('5', 'Asia/Tokyo'), stale: true }, // only the zone differs
+      { auto: autoAt('4', 'Asia/Tokyo'), stale: true }, // only the revision differs
+      { settings: settingsAt('5', 'Asia/Tokyo'), auto: autoAt('5', 'Asia/Tokyo'), stale: false }, // an already matching snapshot
+      { stale: false }, // nothing revision-guarded was cached yet
+    ];
+    for (const deliver of [acceptTimezoneStatus, fetchedInto]) for (const { settings, auto, stale } of cases) {
+      const cache = new QueryClient();
+      // setQueryData also clears an earlier invalidation, so loading again re-arms the checks.
+      const load = () => {
+        for (const name of ['api', 'providers', 'overview', 'sessions']) cache.setQueryData(['usage', name], { marker: name });
+        if (settings) cache.setQueryData(['usage', 'settings'], settings); if (auto) cache.setQueryData(['usage', 'auto'], auto);
+      };
+      load(); const cached = dependents.filter(name => cache.getQueryData(['usage', name]) !== undefined);
+      expect(deliver(cache, tokyo)).toBe(true); expect(cache.getQueryData(['usage', 'timezone'])).toEqual(tokyo);
+      expect(invalidatedIn(cache)).toEqual(stale ? cached : []);
+      // Only the first status reconciles: while the old data is still cached (its refresh has not landed or
+      // failed), unchanged polling and older or equal statuses never invalidate again.
+      load();
+      for (const sequence of ['2', '3', '4']) expect(deliver(cache, { ...tokyo, sequence })).toBe(true);
+      expect(deliver(cache, { ...tokyo, sequence: '4' })).toBe(false); expect(deliver(cache, { ...status, sequence: '3' })).toBe(false);
+      expect(cache.getQueryData<TimezoneStatus>(['usage', 'timezone'])).toEqual({ ...tokyo, sequence: '4' }); expect(invalidatedIn(cache)).toEqual([]);
+      cache.clear();
+    }
+  });
+  it('refreshes Settings read before the first host status, so source saves use the current shared revision', async () => {
+    const client = new MockUsageClient('partial', 0);
+    const initial = await client.getSettings(); // no enabled sources: the switch below starts no rebuild scan
+    await client.updateSettings({ expectedRevision: initial.revision, timezone: initial.timezone, providers: initial.providers.map(({ providerId }) => ({ providerId, enabled: false, directoryRef: null })) });
+    const cache = new QueryClient();
+    const settings = { queryKey: ['usage', 'settings'], queryFn: () => client.getSettings(), staleTime: Infinity };
+    const timezone = { queryKey: ['usage', 'timezone'], queryFn: async () => resolveFetchedTimezone(cache, await client.getTimezone()) };
+    const before = await cache.fetchQuery(settings); expect(before).toMatchObject({ revision: '2', timezone: 'America/Phoenix' });
+    client.simulateSystemTimezone('Asia/Tokyo');
+    expect(await cache.fetchQuery(timezone)).toMatchObject({ revision: '3', effectiveTimezone: 'Asia/Tokyo' });
+    // Without reconciliation the editor would keep revision 2, which the host rejects.
+    await expect(client.updateSettings({ expectedRevision: before.revision, timezone: before.timezone, providers: [] })).rejects.toMatchObject({ code: 'SETTINGS_CONFLICT' });
+    expect(cache.getQueryState(['usage', 'settings'])?.isInvalidated).toBe(true);
+    const fresh = await cache.fetchQuery(settings); expect(fresh).toMatchObject({ revision: '3', timezone: 'Asia/Tokyo' });
+    for (let poll = 0; poll < 3; poll++) await cache.fetchQuery(timezone);
+    expect(cache.getQueryState(['usage', 'settings'])?.isInvalidated).toBe(false);
+    expect(await client.updateSettings({ expectedRevision: fresh.revision, timezone: fresh.timezone, providers: [] })).toMatchObject({ revision: '4', timezone: 'Asia/Tokyo' });
+    cache.clear();
   });
 });
 
