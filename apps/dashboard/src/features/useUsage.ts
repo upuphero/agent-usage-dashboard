@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { QueryClient } from '@tanstack/react-query';
 import type { UsageEvent } from '../api/client';
 import { useUsageClient } from '../app/UsageContext';
-import type { ExportRequest, OverviewQuery, SessionQuery, ScanSummary, UpdateSettingsRequest, UpdateAutoCollectionRequest } from '../api/generated/usage';
+import type { ExportRequest, OverviewQuery, SessionQuery, ScanSummary, UpdateSettingsRequest, UpdateAutoCollectionRequest, TimezoneStatus, UpdateTimezoneRequest } from '../api/generated/usage';
 import { apiError, assertResponseVersion, normalizeError } from '../api/protocol';
 import { useI18n } from '../i18n/I18nContext';
 
@@ -68,10 +68,10 @@ export function useExport() {
 export function useSettings(enabled: boolean) {
   const client = useUsageClient(); const cache = useQueryClient();
   const { language } = useI18n();
-  const query = useQuery({ queryKey: ['usage', 'settings'], enabled: enabled && !!client.getSettings, queryFn: async () => {
+  const query = useQuery({ queryKey: ['usage', 'settings'], enabled: enabled && !!client.getSettings, queryFn: () => readRevisioned(cache, async () => {
     if (!client.getSettings) throw apiError('UNSUPPORTED_FILTER', '当前客户端没有设置接口。');
     return assertResponseVersion(await client.getSettings());
-  } });
+  }) });
   const save = useMutation({ mutationFn: async (request: UpdateSettingsRequest) => {
     if (!client.updateSettings) throw apiError('UNSUPPORTED_FILTER', '当前客户端不能保存设置。');
     return assertResponseVersion(await client.updateSettings(request));
@@ -85,13 +85,68 @@ export function useSettings(enabled: boolean) {
 export function useAutoCollection(enabled: boolean) {
   const client = useUsageClient(); const cache = useQueryClient();
   const query = useQuery({ queryKey: ['usage', 'auto'], enabled: enabled && !!client.getAutoCollection,
-    queryFn: async () => { if (!client.getAutoCollection) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。'); return assertResponseVersion(await client.getAutoCollection()); } });
+    queryFn: () => readRevisioned(cache, async () => { if (!client.getAutoCollection) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。'); return assertResponseVersion(await client.getAutoCollection()); }) });
   const save = useMutation({ mutationFn: async (request: UpdateAutoCollectionRequest) => {
     if (!client.updateAutoCollection) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。');
     return assertResponseVersion(await client.updateAutoCollection(request));
-  }, onSuccess: async result => { cache.setQueryData(['usage', 'auto'], result); await cache.invalidateQueries({ queryKey: ['usage', 'settings'] }); } });
+  }, onSuccess: async result => { cache.setQueryData(['usage', 'auto'], result); await cache.invalidateQueries({ queryKey: ['usage'], predicate: value => ['settings', 'timezone'].includes(String(value.queryKey[1])) }); } });
   const cancel = useMutation({ mutationFn: (jobId: string) => client.cancelScan(jobId), onSuccess: () => cache.invalidateQueries({ queryKey: ['usage', 'auto'] }) });
   return { query, save, cancel };
+}
+const sequenceOf = (status: TimezoneStatus | undefined) => { try { return status ? BigInt(status.sequence) : -1n; } catch { return -1n; } };
+type Revisioned = { revision: string; timezone: string };
+const disagrees = (data: Revisioned, status: TimezoneStatus) => data.revision !== status.revision || data.timezone !== status.effectiveTimezone;
+/** Settings or Automatic collection data cached before the first status that disagrees with the host's shared revision or zone. */
+const predatesStatus = (cache: QueryClient, next: TimezoneStatus) => ['settings', 'auto'].some(name => {
+  const cached = cache.getQueryData<Revisioned>(['usage', name]);
+  return !!cached && disagrees(cached, next);
+});
+/** Settings or Automatic collection reads for their queries. A status accepted while a read was in flight may be newer than its
+ * response; background resync never refreshes Settings (and Automatic collection only periodically), so a response that disagrees
+ * with that status is read again. A read with no newer status accepted meanwhile is kept, so each extra read needs a newer status. */
+export async function readRevisioned<T extends Revisioned>(cache: QueryClient, read: () => Promise<T>): Promise<T> {
+  for (;;) {
+    const before = sequenceOf(cache.getQueryData<TimezoneStatus>(['usage', 'timezone']));
+    const result = await read();
+    const latest = cache.getQueryData<TimezoneStatus>(['usage', 'timezone']);
+    if (!latest || sequenceOf(latest) <= before || !disagrees(result, latest)) return result;
+  }
+}
+/** Rebuilt data or a new shared revision makes zone-dependent views and revision-guarded editors stale (never 'api').
+ * The first accepted status has nothing to compare with, so it reconciles caches loaded earlier against the host instead. */
+function invalidateTimezoneDependents(cache: QueryClient, previous: TimezoneStatus | undefined, next: TimezoneStatus) {
+  const stale = previous ? previous.effectiveTimezone !== next.effectiveTimezone || previous.revision !== next.revision || previous.mode !== next.mode || (previous.rebuild !== 'idle' && next.rebuild === 'idle') : predatesStatus(cache, next);
+  if (!stale) return;
+  void cache.invalidateQueries({ queryKey: ['usage'], predicate: query => ['settings', 'providers', 'overview', 'sessions', 'auto'].includes(String(query.queryKey[1])) });
+}
+/** Applies host timezone status in sequence order; older responses/events are ignored. Returns whether it was stored. */
+export function acceptTimezoneStatus(cache: QueryClient, status: TimezoneStatus): boolean {
+  const previous = cache.getQueryData<TimezoneStatus>(['usage', 'timezone']);
+  if (previous && sequenceOf(status) <= sequenceOf(previous)) return false;
+  cache.setQueryData(['usage', 'timezone'], status);
+  invalidateTimezoneDependents(cache, previous, status);
+  return true;
+}
+/** The same rules for getTimezone responses, which the query stores itself. Returns the status to keep. */
+export function resolveFetchedTimezone(cache: QueryClient, fetched: TimezoneStatus): TimezoneStatus {
+  // An event may have stored a newer status while this read was in flight; never regress.
+  const cached = cache.getQueryData<TimezoneStatus>(['usage', 'timezone']);
+  if (cached && sequenceOf(cached) >= sequenceOf(fetched)) return cached;
+  invalidateTimezoneDependents(cache, cached, fetched);
+  return fetched;
+}
+export function useTimezone(enabled: boolean) {
+  const client = useUsageClient(); const cache = useQueryClient();
+  const query = useQuery({ queryKey: ['usage', 'timezone'], enabled: enabled && !!client.getTimezone, queryFn: async () => {
+    if (!client.getTimezone) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。');
+    return resolveFetchedTimezone(cache, assertResponseVersion(await client.getTimezone()));
+  } });
+  const save = useMutation({ mutationFn: async (request: UpdateTimezoneRequest) => {
+    if (!client.updateTimezone) throw apiError('UNSUPPORTED_FILTER', '当前服务未提供这项设置能力。');
+    return assertResponseVersion(await client.updateTimezone(request));
+  }, onSuccess: result => { acceptTimezoneStatus(cache, result); } });
+  const cancel = useMutation({ mutationFn: (jobId: string) => client.cancelScan(jobId), onSuccess: () => cache.invalidateQueries({ queryKey: ['usage', 'timezone'] }) });
+  return { query, save, cancel, supported: !!client.getTimezone && !!client.updateTimezone };
 }
 /** One subscription per app. Transport owns fallback polling and reconnect/focus detection. */
 export function useBackgroundUsage(enabled: boolean) {
@@ -110,5 +165,6 @@ export function useBackgroundUsage(enabled: boolean) {
 }
 export function applyBackgroundEvent(cache: QueryClient, event: UsageEvent) {
   if (event.kind === 'auto') { cache.setQueryData(['usage', 'auto'], event.status); return; }
+  if (event.kind === 'timezone') { acceptTimezoneStatus(cache, event.status); return; }
   void cache.invalidateQueries({ queryKey: ['usage'], predicate: query => !['api', 'settings'].includes(String(query.queryKey[1])) });
 }

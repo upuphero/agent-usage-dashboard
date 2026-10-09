@@ -7,6 +7,7 @@ mod profile;
 mod runtime;
 mod scheduler;
 mod settings;
+mod timezone;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 pub fn diagnose_usage(output: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -21,6 +22,14 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            // Returning to the app is a cheap native hint that system settings may have changed.
+            let focused = matches!(event, tauri::WindowEvent::Focused(true));
+            let state = window.try_state::<Arc<runtime::Runtime>>();
+            if let Some(runtime) = state.filter(|_| focused) {
+                runtime.wake_timezone(true);
+            }
+        })
         .setup(|app| {
             let handle = app.handle().clone();
             let executable = std::env::current_exe()?;
@@ -38,13 +47,23 @@ pub fn run() {
                 Some(settings),
             );
             tauri::async_runtime::block_on(runtime.recover_interrupted_scans())?;
-            tauri::async_runtime::block_on(runtime.rescan_changed_timezone())?;
+            let handle = app.handle().clone();
+            let monitor = timezone::TimezoneMonitor::new(
+                Arc::new(timezone::OsTimezone),
+                Arc::new(move |status| {
+                    let _ = handle.emit(usage_contracts::TIMEZONE_EVENT, status);
+                }),
+            );
+            let _ = runtime.timezone.set(monitor.clone());
+            // Resolve the system zone before the first query reads the effective one.
+            tauri::async_runtime::block_on(runtime.sync_timezone());
             let handle = app.handle().clone();
             let scheduler = scheduler::Scheduler::new(Arc::new(move |status| {
                 let _ = handle.emit(usage_contracts::AUTO_COLLECTION_EVENT, status);
             }));
             let _ = runtime.scheduler.set(scheduler.clone());
             tauri::async_runtime::block_on(scheduler.start(&runtime));
+            tauri::async_runtime::block_on(monitor.start(&runtime));
             app.manage(runtime);
             Ok(())
         })
@@ -61,7 +80,9 @@ pub fn run() {
             commands::update_settings,
             commands::choose_provider_directory,
             commands::get_auto_collection,
-            commands::update_auto_collection
+            commands::update_auto_collection,
+            commands::get_timezone,
+            commands::update_timezone
         ])
         .build(tauri::generate_context!())
         .expect("desktop initialization failed");

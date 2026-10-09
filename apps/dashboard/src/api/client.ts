@@ -1,6 +1,6 @@
 import type { ApiInfo, ProviderSummary, StartScanRequest, StartScanResult, ScanSummary, OverviewQuery, OverviewResult, SessionQuery, SessionPage, ExportRequest, ExportResult, SettingsResult, UpdateSettingsRequest, ChooseProviderDirectoryResult } from './generated/usage';
-import type { AutoCollectionStatus, UpdateAutoCollectionRequest } from './generated/usage';
-export type UsageEvent = { kind: 'scan'; scan: ScanSummary } | { kind: 'auto'; status: AutoCollectionStatus } | { kind: 'resync' };
+import type { AutoCollectionStatus, UpdateAutoCollectionRequest, TimezoneStatus, UpdateTimezoneRequest } from './generated/usage';
+export type UsageEvent = { kind: 'scan'; scan: ScanSummary } | { kind: 'auto'; status: AutoCollectionStatus } | { kind: 'timezone'; status: TimezoneStatus } | { kind: 'resync' };
 /** Implementations reject with ApiError. Negotiate apiVersion before queries. Polling/events stay inside transports. */
 export interface UsageClient {
   getApiInfo(): Promise<ApiInfo>;
@@ -17,5 +17,8 @@ export interface UsageClient {
   chooseProviderDirectory?(providerId: string, language?: 'zh' | 'en'): Promise<ChooseProviderDirectoryResult>;
   getAutoCollection?(): Promise<AutoCollectionStatus>;
   updateAutoCollection?(request: UpdateAutoCollectionRequest): Promise<AutoCollectionStatus>;
+  /** API 1.3 extension, capability-negotiated ('timezone-follow-system'): older hosts never receive these commands. */
+  getTimezone?(): Promise<TimezoneStatus>;
+  updateTimezone?(request: UpdateTimezoneRequest): Promise<TimezoneStatus>;
   subscribeUsage?(listener: (event: UsageEvent) => void): Promise<() => void>;
 }

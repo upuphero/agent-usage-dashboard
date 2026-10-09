@@ -1,7 +1,8 @@
 // GENERATED from crates/usage-contracts/src/lib.rs. Do not edit.
-export const API_VERSION = "1.2.0" as const;
+export const API_VERSION = "1.3.0" as const;
 export const SCAN_EVENT = "usage://scan-updated" as const;
 export const AUTO_COLLECTION_EVENT = "usage://auto-collection-updated" as const;
+export const TIMEZONE_EVENT = "usage://timezone-updated" as const;
 export const COMMANDS = {
   getApiInfo: "get_api_info",
   listProviders: "list_providers",
@@ -16,6 +17,8 @@ export const COMMANDS = {
   chooseProviderDirectory: "choose_provider_directory",
   getAutoCollection: "get_auto_collection",
   updateAutoCollection: "update_auto_collection",
+  getTimezone: "get_timezone",
+  updateTimezone: "update_timezone",
 } as const;
 export type Accuracy = "exact" | "derived" | "estimated" | "unavailable";
 export type ReportKind = "daily" | "session";
@@ -28,6 +31,9 @@ export type CostKind = "api-equivalent-estimate";
 export type ErrorCode = "INVALID_QUERY" | "INVALID_DATA" | "PROVIDER_NOT_FOUND" | "PROVIDER_DISABLED" | "SOURCE_NOT_DETECTED" | "PERMISSION_DENIED" | "SCHEMA_UNSUPPORTED" | "COVERAGE_INCOMPLETE" | "TIMEOUT" | "OUTPUT_LIMIT_EXCEEDED" | "CANCELLED" | "STORAGE" | "STORAGE_SCHEMA_NEWER" | "UNSUPPORTED_FILTER" | "DATASET_CONFLICT" | "OVERFLOW" | "SCAN_NOT_FOUND" | "SCAN_BUSY" | "SHUTTING_DOWN" | "COLLECTION_FAILED" | "API_VERSION_UNSUPPORTED" | "EXPORT_FAILED" | "INTERNAL" | "SETTINGS_CONFLICT" | "INVALID_DIRECTORY_REF";
 export const ERROR_CODES = ["INVALID_QUERY", "INVALID_DATA", "PROVIDER_NOT_FOUND", "PROVIDER_DISABLED", "SOURCE_NOT_DETECTED", "PERMISSION_DENIED", "SCHEMA_UNSUPPORTED", "COVERAGE_INCOMPLETE", "TIMEOUT", "OUTPUT_LIMIT_EXCEEDED", "CANCELLED", "STORAGE", "STORAGE_SCHEMA_NEWER", "UNSUPPORTED_FILTER", "DATASET_CONFLICT", "OVERFLOW", "SCAN_NOT_FOUND", "SCAN_BUSY", "SHUTTING_DOWN", "COLLECTION_FAILED", "API_VERSION_UNSUPPORTED", "EXPORT_FAILED", "INTERNAL", "SETTINGS_CONFLICT", "INVALID_DIRECTORY_REF"] as const;
 export type AutoCollectionState = "disabled" | "idle" | "checking" | "scanning" | "waiting" | "backoff";
+export type TimezoneMode = "follow-system" | "fixed";
+export type TimezoneRebuildState = "idle" | "pending" | "rebuilding" | "backoff";
+export type TimezoneProviderState = "pending" | "rebuilding" | "succeeded" | "failed";
 export interface Metric<T> {
   value: T | null;
   accuracy: Accuracy;
@@ -277,4 +283,28 @@ export interface AutoCollectionStatus {
   config: AutoCollectionConfig;
   timezone: string;
   providers: Array<AutoProviderStatus>;
+}
+export interface UpdateTimezoneRequest {
+  expectedRevision: string;
+  mode: TimezoneMode;
+  timezone: string | null;
+}
+export interface TimezoneProviderStatus {
+  providerId: string;
+  state: TimezoneProviderState;
+  jobId: string | null;
+  error: ApiError | null;
+}
+export interface TimezoneStatus {
+  apiVersion: string;
+  sequence: string;
+  revision: string;
+  mode: TimezoneMode;
+  effectiveTimezone: string;
+  systemTimezone: string | null;
+  detectionError: ApiError | null;
+  pendingTimezone: string | null;
+  rebuild: TimezoneRebuildState;
+  nextRetryAt: string | null;
+  providers: Array<TimezoneProviderStatus>;
 }
