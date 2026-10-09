@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TimezoneSettings, timezoneOptions, timezoneRequest } from './TimezoneSettings';
 import { TimezoneNotice } from './TimezoneNotice';
-import { acceptTimezoneStatus, applyBackgroundEvent, resolveFetchedTimezone } from './useUsage';
+import { acceptTimezoneStatus, applyBackgroundEvent, readRevisioned, resolveFetchedTimezone, useAutoCollection, useSettings } from './useUsage';
 import { I18nProvider } from '../i18n/I18nContext';
 import { apiError } from '../api/protocol';
 import { API_VERSION, type AutoCollectionStatus, type SettingsResult, type TimezoneStatus } from '../api/generated/usage';
@@ -105,6 +105,72 @@ describe('timezone status cache ordering and invalidation', () => {
     expect(cache.getQueryState(['usage', 'settings'])?.isInvalidated).toBe(false);
     expect(await client.updateSettings({ expectedRevision: fresh.revision, timezone: fresh.timezone, providers: [] })).toMatchObject({ revision: '4', timezone: 'Asia/Tokyo' });
     cache.clear();
+  });
+  it('reads Settings and Automatic collection again when a newer status lands during the read, for events and getTimezone alike', async () => {
+    const tokyo: TimezoneStatus = { ...status, sequence: '11', revision: '5', effectiveTimezone: 'Asia/Tokyo', systemTimezone: 'Asia/Tokyo' };
+    const cases: { before?: TimezoneStatus; during?: TimezoneStatus; replies: [string, string][] }[] = [
+      { during: tokyo, replies: [['4', 'America/Phoenix'], ['5', 'Asia/Tokyo']] }, // the first status lands before an older response
+      { before: status, during: tokyo, replies: [['4', 'America/Phoenix'], ['5', 'Asia/Tokyo']] }, // a later changed status does too
+      { during: tokyo, replies: [['5', 'America/Phoenix'], ['5', 'Asia/Tokyo']] }, // only the zone predates it
+      { during: tokyo, replies: [['5', 'Asia/Tokyo']] }, // already current: read once
+      { during: tokyo, replies: [['6', 'Asia/Tokyo'], ['6', 'Asia/Tokyo']] }, // newer than the status (a later write): read once more, then kept
+      { before: status, during: { ...status, sequence: '9' }, replies: [['5', 'Asia/Tokyo']] }, // a rejected older status never counts
+      { before: status, replies: [['5', 'Asia/Tokyo']] }, // no status meanwhile: the next status reconciles it as before
+    ];
+    for (const deliver of [acceptTimezoneStatus, fetchedInto]) for (const name of ['settings', 'auto'] as const) for (const { before, during, replies } of cases) {
+      const cache = new QueryClient(); if (before) deliver(cache, before);
+      const at = ([revision, zone]: [string, string]) => name === 'settings' ? settingsAt(revision, zone) : autoAt(revision, zone);
+      // Each reply waits until the test delivers it; an unexpected extra read fails the fetch instead of hanging or looping.
+      const pending: ((value: SettingsResult | AutoCollectionStatus) => void)[] = []; let calls = 0;
+      const read = vi.fn(() => ++calls > replies.length ? Promise.reject(new Error('unexpected extra read')) : new Promise<SettingsResult | AutoCollectionStatus>(resolve => { pending.push(resolve); }));
+      const fetched = cache.fetchQuery({ queryKey: ['usage', name], queryFn: () => readRevisioned(cache, read) });
+      for (const [index, reply] of replies.entries()) {
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(index + 1));
+        if (index === 0 && during) deliver(cache, during);
+        pending[index](at(reply));
+      }
+      const kept = at(replies[replies.length - 1]);
+      expect(await fetched).toEqual(kept); expect(cache.getQueryData(['usage', name])).toEqual(kept); expect(read).toHaveBeenCalledTimes(replies.length);
+      // Later unchanged statuses neither read again nor invalidate.
+      const latest = cache.getQueryData<TimezoneStatus>(['usage', 'timezone'])!;
+      for (const step of [1n, 2n]) expect(deliver(cache, { ...latest, sequence: (BigInt(latest.sequence) + step).toString() })).toBe(true);
+      expect(read).toHaveBeenCalledTimes(replies.length); expect(invalidatedIn(cache)).toEqual([]);
+      cache.clear();
+    }
+  });
+  it('keeps the Settings and Automatic collection queries current when their first read lands after a zone switch status, so saves succeed', async () => {
+    // Rendering registers the hooks' own queries; the test then runs exactly those query functions.
+    const Hooks = () => { useSettings(true); useAutoCollection(true); return null; };
+    for (const delivery of ['event', 'getTimezone'] as const) {
+      const client = new MockUsageClient('partial', 0);
+      const initial = await client.getSettings(); // no enabled sources: the switch below starts no rebuild scan
+      await client.updateSettings({ expectedRevision: initial.revision, timezone: initial.timezone, providers: initial.providers.map(({ providerId }) => ({ providerId, enabled: false, directoryRef: null })) });
+      const cache = new QueryClient();
+      const unsubscribe = delivery === 'event' ? await client.subscribeUsage(event => applyBackgroundEvent(cache, event)) : () => {};
+      const timezone = { queryKey: ['usage', 'timezone'], queryFn: async () => resolveFetchedTimezone(cache, await client.getTimezone()) };
+      // The host answers each first read at revision 2 / Phoenix, but the answer lands only after the switch's status.
+      const gates: (() => void)[] = [];
+      const held = <T,>(read: () => Promise<T>) => { let calls = 0; return vi.fn(async () => { const value = await read(); if (++calls === 1) await new Promise<void>(resolve => { gates.push(resolve); }); return value; }); };
+      const settings = held(client.getSettings.bind(client)); const auto = held(client.getAutoCollection.bind(client));
+      client.getSettings = settings; client.getAutoCollection = auto;
+      renderToStaticMarkup(<I18nProvider initialLanguage="en"><QueryClientProvider client={cache}><UsageProvider client={client}><Hooks /></UsageProvider></QueryClientProvider></I18nProvider>);
+      const registered = <T,>(name: string) => cache.getQueryCache().find<T>({ queryKey: ['usage', name] })!;
+      const reads = Promise.all([registered<SettingsResult>('settings').fetch(), registered<AutoCollectionStatus>('auto').fetch()]);
+      await vi.waitFor(() => expect(gates).toHaveLength(2));
+      client.simulateSystemTimezone('Asia/Tokyo');
+      if (delivery === 'getTimezone') await cache.fetchQuery(timezone);
+      expect(cache.getQueryData(['usage', 'timezone'])).toMatchObject({ revision: '3', effectiveTimezone: 'Asia/Tokyo' });
+      gates.forEach(open => open());
+      const [current, currentAuto] = await reads;
+      expect(current).toMatchObject({ revision: '3', timezone: 'Asia/Tokyo' }); expect(currentAuto).toMatchObject({ revision: '3', timezone: 'Asia/Tokyo' });
+      expect(settings).toHaveBeenCalledTimes(2); expect(auto).toHaveBeenCalledTimes(2);
+      // Unchanged polls neither invalidate nor read again, and saves use the current shared revision.
+      for (let poll = 0; poll < 3; poll++) await cache.fetchQuery(timezone);
+      expect(invalidatedIn(cache)).toEqual([]); expect(settings).toHaveBeenCalledTimes(2); expect(auto).toHaveBeenCalledTimes(2);
+      await expect(client.updateSettings({ expectedRevision: '2', timezone: 'Asia/Tokyo', providers: [] })).rejects.toMatchObject({ code: 'SETTINGS_CONFLICT' });
+      expect(await client.updateSettings({ expectedRevision: current.revision, timezone: current.timezone, providers: [] })).toMatchObject({ revision: '4', timezone: 'Asia/Tokyo' });
+      unsubscribe(); cache.clear();
+    }
   });
 });
 

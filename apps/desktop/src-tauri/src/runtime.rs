@@ -388,10 +388,16 @@ impl Runtime {
             return;
         };
         self.apply_pending_timezone().await;
-        let enabled = self.enabled_providers().await;
-        if let Ok(true) = settings.complete_rebuild_if_done(&enabled).await {
-            monitor.reset_rebuild();
-        }
+        // Source-setting writes hold the scan gate, so no source can be enabled between reading
+        // the enabled sources and deciding completion from them.
+        let enabled = {
+            let _gate = self.active.lock().await;
+            let enabled = self.enabled_providers().await;
+            if let Ok(true) = settings.complete_rebuild_if_done(&enabled).await {
+                monitor.reset_rebuild();
+            }
+            enabled
+        };
         let view = settings.timezone_view().await;
         let (_, _, auto) = settings.auto_config().await;
         if view.needs_rescan && !auto.enabled && monitor.retry_allowed(monitor.now()) {
@@ -426,6 +432,7 @@ impl Runtime {
         if state == ScanState::Succeeded {
             if settings.record_rebuild_success(provider, zone).await {
                 monitor.clear_error(provider);
+                // This job still occupies the scan gate, so source-setting writes are refused here.
                 let enabled = self.enabled_providers().await;
                 if let Ok(true) = settings.complete_rebuild_if_done(&enabled).await {
                     monitor.reset_rebuild();
@@ -1431,6 +1438,88 @@ mod tests {
         let roots = h.roots();
         assert!(roots[..3].iter().all(|(_, root)| root.is_empty()));
         assert_eq!(roots[3], read(claude, &stored.claude_root_path.unwrap()));
+    }
+    #[tokio::test]
+    async fn a_source_enabled_during_the_completion_check_is_rebuilt_before_completion() {
+        use api::TimezoneProviderState as Step;
+        let (phoenix, tokyo) = ("America/Phoenix", "Asia/Tokyo");
+        let [claude, codex, antigravity] = crate::profile::PROVIDERS;
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = prepared(&directory, TimezoneMode::FollowSystem, phoenix);
+        for id in [claude, codex] {
+            let mut provider = profile.provider(id).unwrap();
+            provider.enabled = true;
+            profile.set_provider(id, provider).unwrap();
+        }
+        let configs = profile.configs();
+        let configured = crate::profile::PROVIDERS.map(|id| (id, configs[id].clone()));
+        let h = Harness::with_sources(directory, profile, configured.into());
+        let save = |revision: &str, enabled: &[&str]| api::UpdateSettingsRequest {
+            expected_revision: revision.into(),
+            timezone: tokyo.into(),
+            providers: crate::profile::PROVIDERS
+                .map(|id| api::ProviderSettingsUpdate {
+                    provider_id: id.into(),
+                    enabled: enabled.contains(&id),
+                    directory_ref: None,
+                })
+                .into(),
+        };
+        let marked = |h: &Harness| {
+            let stored = DesktopProfile::load_or_create(h.directory.path()).unwrap();
+            stored.timezone_needs_rescan
+        };
+        // Automatic collection stays off: A is rebuilt in the new zone; disabling B leaves A as
+        // the only enabled source, so the next monitor step may complete the rebuild.
+        h.system(Ok(tokyo));
+        h.tick().await;
+        h.runtime.wait_for_idle().await;
+        assert_eq!(h.reads(), [read(claude, tokyo)]);
+        h.runtime
+            .update_settings(save("2", &[claude]))
+            .await
+            .unwrap();
+        assert!(marked(&h));
+        // Holding the store lock queues a write enabling C first and that step second, so the
+        // write commits after the step could read the enabled sources but before it decides.
+        h.hold.store(true, Ordering::Release);
+        let held = h.runtime.settings.as_ref().unwrap().hold().await;
+        let write = h.runtime.update_settings(save("3", &[claude, antigravity]));
+        let mut write = std::pin::pin!(write);
+        assert!(write.as_mut().now_or_never().is_none());
+        let mut step = std::pin::pin!(h.runtime.drive_timezone());
+        assert!(step.as_mut().now_or_never().is_none());
+        drop(held);
+        write.await.unwrap();
+        step.await;
+        // The step saw C: the marker stays set and C is rebuilt in the target zone.
+        assert!(marked(&h));
+        h.reached(read(antigravity, tokyo)).await;
+        let status = h.status().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Rebuilding);
+        let steps: Vec<_> = status
+            .providers
+            .iter()
+            .map(|p| (p.provider_id.as_str(), p.state))
+            .collect();
+        assert_eq!(
+            steps,
+            [(antigravity, Step::Rebuilding), (claude, Step::Succeeded)]
+        );
+        // A failed attempt keeps it set; only C's success in the target zone completes it.
+        h.fail.store(true, Ordering::Release);
+        h.hold.store(false, Ordering::Release);
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Backoff);
+        assert!(marked(&h));
+        h.fail.store(false, Ordering::Release);
+        h.monitor().advance(60);
+        h.settle().await;
+        let status = h.settle().await;
+        assert_eq!(status.rebuild, api::TimezoneRebuildState::Idle);
+        assert!(!marked(&h));
+        let reads = [claude, antigravity, antigravity].map(|id| read(id, tokyo));
+        assert_eq!(h.reads(), reads);
     }
     #[tokio::test]
     async fn automatic_collection_owns_the_rebuild_when_enabled() {

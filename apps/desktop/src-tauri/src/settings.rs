@@ -130,7 +130,8 @@ impl SettingsStore {
         state.rebuilt.insert(provider.into());
         true
     }
-    /// Clears the persisted retry marker once every currently enabled source is rebuilt.
+    /// Clears the persisted retry marker once every currently enabled source is rebuilt. Callers
+    /// read `enabled` behind the scan gate that source-setting writes hold, so it is current.
     pub async fn complete_rebuild_if_done(&self, enabled: &[String]) -> Result<bool, CoreError> {
         let mut state = self.state.lock().await;
         if !state.profile.timezone_needs_rescan
@@ -230,6 +231,11 @@ impl SettingsStore {
             .retain(|id| root(&before, id) == root(&after, id));
         state.profile = next;
         Ok(())
+    }
+    /// Test seam: holds the store lock so competing operations queue behind it in a known order.
+    #[cfg(test)]
+    pub async fn hold(&self) -> impl Sized + '_ {
+        self.state.lock().await
     }
     #[cfg(test)]
     pub async fn remember_directory(
