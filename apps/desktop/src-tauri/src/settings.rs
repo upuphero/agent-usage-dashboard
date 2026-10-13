@@ -1,6 +1,7 @@
 use crate::{
     mapping,
-    profile::{DesktopProfile, PROVIDERS},
+    profile::{DesktopProfile, TimezoneMode, PROVIDERS},
+    timezone,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -21,8 +22,17 @@ struct PendingDirectory {
 struct State {
     profile: DesktopProfile,
     pending: BTreeMap<String, PendingDirectory>,
-    timezone_rescans: Option<BTreeSet<String>>,
+    /// Enabled sources already rebuilt in the current effective zone from their current directory;
+    /// cleared when the zone changes, and per source when its directory changes.
+    rebuilt: BTreeSet<String>,
 }
+pub struct TimezoneView {
+    pub revision: String,
+    pub mode: TimezoneMode,
+    pub effective: String,
+    pub needs_rescan: bool,
+}
+type Saved = (api::SettingsResult, BTreeMap<String, SourceConfig>, bool);
 pub struct SettingsStore {
     directory: PathBuf,
     state: Mutex<State>,
@@ -34,7 +44,7 @@ impl SettingsStore {
             state: Mutex::new(State {
                 profile,
                 pending: BTreeMap::new(),
-                timezone_rescans: None,
+                rebuilt: BTreeSet::new(),
             }),
         }
     }
@@ -90,39 +100,142 @@ impl SettingsStore {
         state.profile = next;
         Ok(())
     }
-    pub async fn take_timezone_rescan(&self, providers: &[String]) -> Option<String> {
-        let mut state = self.state.lock().await;
-        if !state.profile.timezone_needs_rescan || state.timezone_rescans.is_some() {
-            return None;
+    pub async fn timezone_view(&self) -> TimezoneView {
+        let state = self.state.lock().await;
+        TimezoneView {
+            revision: state.profile.settings_revision.to_string(),
+            mode: state.profile.timezone_mode,
+            effective: state.profile.timezone.clone(),
+            needs_rescan: state.profile.timezone_needs_rescan,
         }
-        state.timezone_rescans = Some(providers.iter().cloned().collect());
-        Some(state.profile.timezone.clone())
     }
-    pub async fn complete_timezone_rescan(
-        &self,
-        provider: &str,
-        timezone: &str,
-    ) -> Result<(), CoreError> {
-        let mut state = self.state.lock().await;
-        if !state.profile.timezone_needs_rescan || state.profile.timezone != timezone {
-            return Ok(());
+    /// The zone still being rebuilt from source logs, if any.
+    pub async fn rebuild_target(&self) -> Option<String> {
+        let state = self.state.lock().await;
+        if state.profile.timezone_needs_rescan {
+            Some(state.profile.timezone.clone())
+        } else {
+            None
         }
-        let Some(remaining) = &mut state.timezone_rescans else {
-            return Ok(());
-        };
-        remaining.remove(provider);
-        if !remaining.is_empty() {
-            return Ok(());
+    }
+    pub async fn rebuilt(&self) -> BTreeSet<String> {
+        self.state.lock().await.rebuilt.clone()
+    }
+    /// Only a success in the exact current target counts; an older zone never acknowledges it.
+    pub async fn record_rebuild_success(&self, provider: &str, zone: &str) -> bool {
+        let mut state = self.state.lock().await;
+        if !state.profile.timezone_needs_rescan || state.profile.timezone != zone {
+            return false;
+        }
+        state.rebuilt.insert(provider.into());
+        true
+    }
+    /// Clears the persisted retry marker once every currently enabled source is rebuilt. Callers
+    /// read `enabled` behind the scan gate that source-setting writes hold, so it is current.
+    pub async fn complete_rebuild_if_done(&self, enabled: &[String]) -> Result<bool, CoreError> {
+        let mut state = self.state.lock().await;
+        if !state.profile.timezone_needs_rescan
+            || !enabled.iter().all(|id| state.rebuilt.contains(id))
+        {
+            return Ok(false);
         }
         let mut next = state.profile.clone();
         next.timezone_needs_rescan = false;
+        self.commit(&mut state, next).await?;
+        state.rebuilt.clear();
+        Ok(true)
+    }
+    /// Applies a detected zone at the caller's scan gate; returns whether the zone changed.
+    pub async fn follow_system_timezone(&self, target: &str) -> Result<bool, CoreError> {
+        let mut state = self.state.lock().await;
+        if state.profile.timezone_mode != TimezoneMode::FollowSystem
+            || timezone::same_zone(&state.profile.timezone, target)
+        {
+            return Ok(false);
+        }
+        let mut next = state.profile.clone();
+        next.timezone = timezone::canonical(target).ok_or(CoreError::InvalidQuery)?;
+        next.timezone_needs_rescan = true;
+        next.settings_revision = next
+            .settings_revision
+            .checked_add(1)
+            .ok_or(CoreError::Overflow)?;
+        self.commit(&mut state, next).await?;
+        Ok(true)
+    }
+    /// Independent mode write; the caller holds the scan gate. A fixed change of zone waits for
+    /// idle scans, while following always saves and a differing system zone applies later.
+    pub async fn update_timezone(
+        &self,
+        request: &api::UpdateTimezoneRequest,
+        system: Option<&str>,
+        scans_active: bool,
+    ) -> Result<bool, api::ApiError> {
+        let revision = parse_revision(&request.expected_revision)?;
+        let invalid = || mapping::error(CoreError::InvalidQuery);
+        let fixed = match request.timezone.as_deref() {
+            Some(zone) => Some(timezone::canonical(zone).ok_or_else(invalid)?),
+            None => None,
+        };
+        let mode = match (request.mode, &fixed) {
+            (api::TimezoneMode::Fixed, Some(_)) => TimezoneMode::Fixed,
+            (api::TimezoneMode::FollowSystem, None) => TimezoneMode::FollowSystem,
+            _ => return Err(invalid()),
+        };
+        let mut state = self.state.lock().await;
+        if revision != state.profile.settings_revision {
+            return Err(conflict());
+        }
+        let current = state.profile.timezone.clone();
+        let target = match (fixed, system) {
+            (Some(zone), _) => zone,
+            (None, Some(zone)) if !scans_active => zone.to_owned(),
+            (None, _) => current.clone(),
+        };
+        let changed = !timezone::same_zone(&target, &current);
+        if changed && scans_active {
+            return Err(mapping::error(CoreError::ScanBusy));
+        }
+        let mut next = state.profile.clone();
+        next.timezone_mode = mode;
+        if changed {
+            next.timezone = target;
+            next.timezone_needs_rescan = true;
+        }
+        next.settings_revision = next
+            .settings_revision
+            .checked_add(1)
+            .ok_or_else(|| mapping::error(CoreError::Overflow))?;
+        let committed = self.commit(&mut state, next).await;
+        committed.map_err(mapping::error)?;
+        Ok(changed)
+    }
+    /// Atomic persistence of the next profile; any effective-zone change restarts rebuild progress,
+    /// and a source whose directory changes must be rebuilt again from the new one.
+    async fn commit(&self, state: &mut State, next: DesktopProfile) -> Result<(), CoreError> {
         let write = next.clone();
         let directory = self.directory.clone();
         tokio::task::spawn_blocking(move || write.persist(&directory))
             .await
             .map_err(|_| CoreError::Storage)??;
+        if next.timezone != state.profile.timezone {
+            state.rebuilt.clear();
+        }
+        // The directory is the scope a scan captures; unaffected sources keep their progress.
+        let (before, after) = (state.profile.configs(), next.configs());
+        let root = |configs: &BTreeMap<String, SourceConfig>, id: &str| {
+            configs.get(id).map(|config| config.root_path.clone())
+        };
+        state
+            .rebuilt
+            .retain(|id| root(&before, id) == root(&after, id));
         state.profile = next;
         Ok(())
+    }
+    /// Test seam: holds the store lock so competing operations queue behind it in a known order.
+    #[cfg(test)]
+    pub async fn hold(&self) -> impl Sized + '_ {
+        self.state.lock().await
     }
     #[cfg(test)]
     pub async fn remember_directory(
@@ -165,10 +278,11 @@ impl SettingsStore {
             label: "已选择自定义用量目录".into(),
         })
     }
+    /// Returns the view, source configuration and whether the effective zone changed.
     pub async fn update(
         &self,
         request: api::UpdateSettingsRequest,
-    ) -> Result<(api::SettingsResult, BTreeMap<String, SourceConfig>), api::ApiError> {
+    ) -> Result<Saved, api::ApiError> {
         usage_core::application::validate_timezone(&request.timezone).map_err(mapping::error)?;
         let revision = request
             .expected_revision
@@ -187,13 +301,17 @@ impl SettingsStore {
         }
         let mut state = self.state.lock().await;
         if revision != state.profile.settings_revision {
-            return Err(settings_error(
-                api::ErrorCode::SettingsConflict,
-                "设置已被更新，请重新读取后保存。",
-            ));
+            return Err(conflict());
         }
         let mut next = state.profile.clone();
-        next.timezone = request.timezone;
+        // Older clients only send an explicit statistical zone: a different one is a fixed choice.
+        let timezone_changed = !timezone::same_zone(&request.timezone, &next.timezone);
+        if timezone_changed {
+            let invalid = || mapping::error(CoreError::InvalidQuery);
+            next.timezone = timezone::canonical(&request.timezone).ok_or_else(invalid)?;
+            next.timezone_mode = TimezoneMode::Fixed;
+            next.timezone_needs_rescan = true;
+        }
         for update in request.providers {
             let mut provider = next.provider(&update.provider_id).map_err(mapping::error)?;
             let current = provider.directory_ref.as_deref().unwrap_or("configured");
@@ -229,16 +347,26 @@ impl SettingsStore {
             .settings_revision
             .checked_add(1)
             .ok_or_else(|| mapping::error(CoreError::Overflow))?;
-        let directory = self.directory.clone();
-        let write = next.clone();
-        tokio::task::spawn_blocking(move || write.persist(&directory))
-            .await
-            .map_err(|_| mapping::error(CoreError::Storage))?
-            .map_err(mapping::error)?;
-        state.profile = next;
+        let committed = self.commit(&mut state, next).await;
+        committed.map_err(mapping::error)?;
         let configs = state.profile.configs();
-        Ok((view(&state.profile), configs))
+        Ok((view(&state.profile), configs, timezone_changed))
     }
+}
+fn parse_revision(value: &str) -> Result<u64, api::ApiError> {
+    let revision = value
+        .parse::<u64>()
+        .map_err(|_| mapping::error(CoreError::InvalidQuery))?;
+    if revision.to_string() != value {
+        return Err(mapping::error(CoreError::InvalidQuery));
+    }
+    Ok(revision)
+}
+fn conflict() -> api::ApiError {
+    settings_error(
+        api::ErrorCode::SettingsConflict,
+        "设置已被更新，请重新读取后保存。",
+    )
 }
 fn settings_error(code: api::ErrorCode, message: &str) -> api::ApiError {
     api::ApiError {
@@ -342,44 +470,201 @@ mod tests {
         assert_eq!(reopened.claude_dataset_id, original.claude_dataset_id);
         assert!(!reopened.claude_enabled);
     }
+    fn code<T: std::fmt::Debug>(result: Result<T, api::ApiError>) -> api::ErrorCode {
+        result.unwrap_err().code
+    }
     #[tokio::test]
-    async fn migration_rebuild_remains_pending_until_all_enabled_sources_succeed() {
+    async fn rebuild_is_acknowledged_only_by_all_enabled_sources_in_the_target_zone() {
         let directory = tempfile::tempdir().unwrap();
         let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
-        profile.timezone = "America/Phoenix".into();
+        let zone = "America/Phoenix";
+        profile.timezone = zone.into();
         profile.timezone_needs_rescan = true;
         profile.persist(directory.path()).unwrap();
         let store = SettingsStore::new(directory.path(), profile);
-        let providers = vec!["ccusage.claude-code".into(), "ccusage.codex".into()];
-        assert_eq!(
-            store.take_timezone_rescan(&providers).await.as_deref(),
-            Some("America/Phoenix")
-        );
-        assert!(store.take_timezone_rescan(&providers).await.is_none());
-        store
-            .complete_timezone_rescan("ccusage.claude-code", "America/Phoenix")
-            .await
-            .unwrap();
+        let codex = "ccusage.codex";
+        let enabled = [PROVIDER.to_owned(), codex.to_owned()];
+        assert_eq!(store.rebuild_target().await.as_deref(), Some(zone));
+        assert!(!store.record_rebuild_success(codex, "UTC").await);
+        assert!(store.record_rebuild_success(PROVIDER, zone).await);
+        let done = store.complete_rebuild_if_done(&enabled).await;
+        assert!(!done.unwrap());
+        // A restart before completion keeps the persisted retry marker.
         let reopened = DesktopProfile::load_or_create(directory.path()).unwrap();
         assert!(reopened.timezone_needs_rescan);
-        let retry = SettingsStore::new(directory.path(), reopened);
-        assert!(retry.take_timezone_rescan(&providers).await.is_some());
-        store
-            .complete_timezone_rescan("ccusage.codex", "UTC")
-            .await
-            .unwrap();
-        assert!(
-            DesktopProfile::load_or_create(directory.path())
-                .unwrap()
-                .timezone_needs_rescan
-        );
-        store
-            .complete_timezone_rescan("ccusage.codex", "America/Phoenix")
-            .await
-            .unwrap();
+        assert!(store.record_rebuild_success(codex, zone).await);
+        let done = store.complete_rebuild_if_done(&enabled).await;
+        assert!(done.unwrap());
         let completed = DesktopProfile::load_or_create(directory.path()).unwrap();
         assert!(!completed.timezone_needs_rescan);
         assert_eq!(completed.settings_revision, 1);
+        assert!(store.rebuild_target().await.is_none());
+        assert!(!store.record_rebuild_success(PROVIDER, zone).await);
+    }
+    #[tokio::test]
+    async fn a_new_directory_withdraws_only_that_sources_rebuild_acknowledgement() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
+        let zone = "Asia/Tokyo";
+        profile.timezone = zone.into();
+        profile.timezone_needs_rescan = true;
+        let dataset = profile.claude_dataset_id.clone();
+        let store = SettingsStore::new(directory.path(), profile);
+        let codex = "ccusage.codex";
+        let enabled = [PROVIDER.to_owned(), codex.to_owned()];
+        let logs = |name: &str| {
+            let path = directory.path().join(name).join("projects");
+            std::fs::create_dir_all(&path).unwrap();
+            path
+        };
+        let save = |revision: &str, directory_ref: &str| api::UpdateSettingsRequest {
+            expected_revision: revision.into(),
+            timezone: zone.into(),
+            providers: vec![api::ProviderSettingsUpdate {
+                provider_id: PROVIDER.into(),
+                enabled: true,
+                directory_ref: Some(directory_ref.into()),
+            }],
+        };
+        let first = store.remember_directory(logs("first")).await.unwrap();
+        store.update(save("1", &first.directory_ref)).await.unwrap();
+        assert!(store.record_rebuild_success(PROVIDER, zone).await);
+        // Saving the same directory, or choosing the same folder again, keeps its progress.
+        store.update(save("2", &first.directory_ref)).await.unwrap();
+        let again = store.remember_directory(logs("first")).await.unwrap();
+        store.update(save("3", &again.directory_ref)).await.unwrap();
+        assert!(store.record_rebuild_success(codex, zone).await);
+        let both = BTreeSet::from([PROVIDER.to_owned(), codex.to_owned()]);
+        assert_eq!(store.rebuilt().await, both);
+        // Another directory withdraws only that source; the other keeps its valid progress.
+        let moved = store.remember_directory(logs("moved")).await.unwrap();
+        store.update(save("4", &moved.directory_ref)).await.unwrap();
+        assert_eq!(store.rebuilt().await, BTreeSet::from([codex.to_owned()]));
+        assert!(!store.complete_rebuild_if_done(&enabled).await.unwrap());
+        let reopened = DesktopProfile::load_or_create(directory.path()).unwrap();
+        assert!(reopened.timezone_needs_rescan);
+        // Completion needs a success after the change.
+        assert!(store.record_rebuild_success(PROVIDER, zone).await);
+        assert!(store.complete_rebuild_if_done(&enabled).await.unwrap());
+        let completed = DesktopProfile::load_or_create(directory.path()).unwrap();
+        assert!(!completed.timezone_needs_rescan);
+        assert_eq!(completed.timezone, zone);
+        assert_eq!(completed.claude_dataset_id, dataset);
+    }
+    #[tokio::test]
+    async fn no_enabled_sources_complete_a_rebuild_without_collection() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
+        profile.timezone_needs_rescan = true;
+        let store = SettingsStore::new(directory.path(), profile);
+        assert!(store.complete_rebuild_if_done(&[]).await.unwrap());
+        assert!(!store.timezone_view().await.needs_rescan);
+    }
+    #[tokio::test]
+    async fn detected_zones_apply_only_in_follow_mode_and_restart_rebuild_progress() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
+        profile.timezone = "Asia/Calcutta".into();
+        let store = SettingsStore::new(directory.path(), profile);
+        let (kolkata, paris, arizona) = ("Asia/Kolkata", "Europe/Paris", "US/Arizona");
+        // The same identity in another spelling is not a change.
+        assert!(!store.follow_system_timezone(kolkata).await.unwrap());
+        assert!(store.follow_system_timezone(paris).await.unwrap());
+        let view = store.timezone_view().await;
+        assert_eq!(view.effective, paris);
+        assert_eq!(view.revision, "2");
+        assert!(view.needs_rescan);
+        assert!(store.record_rebuild_success(PROVIDER, paris).await);
+        assert!(store.follow_system_timezone(arizona).await.unwrap());
+        assert!(store.rebuilt().await.is_empty());
+        assert_eq!(store.timezone_view().await.effective, "America/Phoenix");
+        let fixed = api::UpdateTimezoneRequest {
+            expected_revision: "3".into(),
+            mode: api::TimezoneMode::Fixed,
+            timezone: Some("Asia/Tokyo".into()),
+        };
+        let changed = store.update_timezone(&fixed, None, false).await;
+        assert!(changed.unwrap());
+        assert!(!store.follow_system_timezone("UTC").await.unwrap());
+        let reopened = DesktopProfile::load_or_create(directory.path()).unwrap();
+        assert_eq!(reopened.timezone, "Asia/Tokyo");
+        assert_eq!(reopened.timezone_mode, TimezoneMode::Fixed);
+    }
+    #[tokio::test]
+    async fn timezone_writes_validate_mode_revision_and_the_scan_gate() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
+        profile.timezone = "America/Phoenix".into();
+        let store = SettingsStore::new(directory.path(), profile);
+        let request = |revision: &str, mode, zone: Option<&str>| api::UpdateTimezoneRequest {
+            expected_revision: revision.into(),
+            mode,
+            timezone: zone.map(Into::into),
+        };
+        let fixed = api::TimezoneMode::Fixed;
+        let follow = api::TimezoneMode::FollowSystem;
+        for invalid in [
+            request("1", fixed, None),
+            request("1", follow, Some("UTC")),
+            request("1", fixed, Some("Mars/Base")),
+            request("01", follow, None),
+        ] {
+            let result = store.update_timezone(&invalid, None, false).await;
+            assert_eq!(code(result), api::ErrorCode::InvalidQuery);
+        }
+        // Following during a scan saves the mode; the monitor applies the zone at a safe boundary.
+        let tokyo = Some("Asia/Tokyo");
+        let busy = request("1", follow, None);
+        let changed = store.update_timezone(&busy, tokyo, true).await;
+        assert!(!changed.unwrap());
+        let view = store.timezone_view().await;
+        assert_eq!(view.mode, TimezoneMode::FollowSystem);
+        assert_eq!(view.effective, "America/Phoenix");
+        // A fixed change of zone never replaces the scope of a running scan.
+        let fixed_tokyo = request("2", fixed, tokyo);
+        let result = store.update_timezone(&fixed_tokyo, None, true).await;
+        assert_eq!(code(result), api::ErrorCode::ScanBusy);
+        let alias = request("2", fixed, Some("Japan"));
+        let changed = store.update_timezone(&alias, None, false).await;
+        assert!(changed.unwrap());
+        let reopened = DesktopProfile::load_or_create(directory.path()).unwrap();
+        assert_eq!(reopened.timezone, "Asia/Tokyo");
+        assert_eq!(reopened.timezone_mode, TimezoneMode::Fixed);
+        assert!(reopened.timezone_needs_rescan);
+        assert_eq!(reopened.settings_revision, 3);
+        let stale = request("2", follow, None);
+        let result = store.update_timezone(&stale, Some("UTC"), false).await;
+        assert_eq!(code(result), api::ErrorCode::SettingsConflict);
+        let idle = request("3", follow, None);
+        let changed = store.update_timezone(&idle, Some("UTC"), false).await;
+        assert!(changed.unwrap());
+        assert_eq!(store.timezone_view().await.effective, "UTC");
+    }
+    #[tokio::test]
+    async fn legacy_saves_keep_the_mode_unless_they_choose_a_different_zone() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut profile = DesktopProfile::load_or_create(directory.path()).unwrap();
+        profile.timezone = "Asia/Calcutta".into();
+        let store = SettingsStore::new(directory.path(), profile);
+        let save = |revision: &str, zone: &str| api::UpdateSettingsRequest {
+            expected_revision: revision.into(),
+            timezone: zone.into(),
+            providers: vec![],
+        };
+        let (_, _, changed) = store.update(save("1", "Asia/Kolkata")).await.unwrap();
+        assert!(!changed);
+        let view = store.timezone_view().await;
+        assert_eq!(view.mode, TimezoneMode::FollowSystem);
+        assert_eq!(view.effective, "Asia/Calcutta");
+        assert!(!view.needs_rescan);
+        let (_, _, changed) = store.update(save("2", "US/Arizona")).await.unwrap();
+        assert!(changed);
+        let view = store.timezone_view().await;
+        assert_eq!(view.mode, TimezoneMode::Fixed);
+        assert_eq!(view.effective, "America/Phoenix");
+        assert!(view.needs_rescan);
+        let result = store.update(save("3", "Mars/Base")).await;
+        assert_eq!(code(result), api::ErrorCode::InvalidQuery);
     }
     #[tokio::test]
     async fn save_is_revision_checked_and_keeps_identity_and_opaque_paths() {
@@ -398,7 +683,7 @@ mod tests {
                 directory_ref: Some(selected.directory_ref.clone()),
             }],
         };
-        let (result, _) = store.update(request()).await.unwrap();
+        let (result, _, _) = store.update(request()).await.unwrap();
         assert_eq!(result.revision, "2");
         assert_eq!(
             store.update(request()).await.unwrap_err().code,

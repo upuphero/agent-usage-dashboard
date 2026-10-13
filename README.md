@@ -25,12 +25,14 @@ Track local AI agent usage on Windows and macOS.
 | 数据质量说明 | 区分来源报告、推导、估算与不可用字段，保留缺失价格和部分覆盖提示 |
 | 导出 | 导出 JSON 完整历史归档或当前筛选范围的 CSV 报表 |
 | 语言与显示设置 | 默认中文，可切换英文并保存偏好；深色、浅色、跟随系统主题 |
-| 统计设置 | 来源开关与统计时区持久化 |
+| 统计设置 | 来源开关与统计时区持久化；0.0.8 开发分支增加“跟随系统 / 固定时区”两种模式 |
 | 自动完整扫描 | 默认关闭；1/5/15 分钟检查、来源变化监听、休眠恢复检查与后台视图更新；两平台 CI 已通过，真实硬件恢复仍待验收 |
 
 **0.0.6 更新：** 默认中文界面，右上角语言图标可切换英文并保存偏好。页面、筛选、状态和图表文字统一切换，保留当前筛选与图表状态。Windows/macOS 构建、原生测试和安装验证已通过。[更新与构建记录](docs/ci-validation/0.0.6-language-switch.md)
 
 **0.0.7 更新：** 自动完整扫描第一版（API 1.2 / profile v4）已通过 Windows x64 / macOS ARM64 CI 原生测试、安装检查和出包。本机已下载并核对三份安装包 SHA-256；真实硬件休眠/GUI 等场景仍待验收。既有 0.0.6 安装包不包含本次功能。[构建与下载](https://github.com/upuphero/agent-usage-dashboard/actions/runs/37672597908) · [设计与验证记录](docs/ci-validation/auto-full-scan-v1.md)
+
+**0.0.8（开发中，尚未构建）：** 统计时区可选择“跟随系统”（新配置默认）或“固定时区”。跟随模式由桌面宿主检测系统时区（启动、每 60 秒、休眠恢复、窗口重新获得焦点时检查）；变化在没有活动扫描时生效，并从来源原始日志重建已启用来源的新时区统计，不改写已有每日总量。夏令时变化不视为切换。从 0.0.7 升级时保留原时区并设为固定模式。本地前端/契约检查已通过；Rust 编译、两平台 CI、安装包和真机验证尚未执行。[设计与本地验证](docs/ci-validation/follow-system-timezone-v1.md)
 
 0.0.5 已修复本地统计日期：新配置采用系统时区，旧 UTC 默认配置升级时自动迁移并重新扫描。[已验证的 0.0.5 构建](docs/ci-validation/0.0.5-local-time.md)
 
@@ -106,7 +108,7 @@ Changes trigger the existing **full scan**, not incremental accumulation. Automa
 - **成本是 API 等价估算。** 它用于比较用量；订阅账单、剩余额度及官方扣费不在当前统计范围内。缺少价格时会显示不可用或已知部分。
 - **缺失与零分开处理。** 完整覆盖范围内没有使用记录的日期可补零；未扫描、缺字段或覆盖不完整的数据保留明确提示。
 - **会话展示累计用量。** 日期筛选用于寻找期间最后活跃的会话，表格仍展示全会话累计值；查看期间消费请使用每日趋势。
-- **日期按统计时区分组。** 新配置采用系统本地时区，之后使用已保存的设置。手动更改统计时区后需要重新扫描原始日志。
+- **日期按统计时区分组。** 0.0.7 及之前：新配置采用系统本地时区，之后使用已保存的设置，手动更改后需要重新扫描原始日志。0.0.8 分支：“跟随系统”模式自动随系统时区切换并重建，“固定时区”保持所选时区；任何统计时区变化都从原始日志重新生成该时区的统计，重建完成前新时区统计可能不完整、缺失部分显示为不可用。
 - **字段以来源提供为准。** 推理输出属于输出总量的子集；来源或模型分布明细与总计也不应再次相加。
 
 ### 本地存储与隐私
@@ -217,7 +219,7 @@ cargo test -p usage-core -p usage-contracts -p usage-adapters --locked
 - [ ] [T4–T6 分发准备](docs/coordination/TODO_GUIDE.md#t4)：长期开发包/固定 Release、正式签名/公证、完整第三方 notices
 - [ ] [T7 真正增量](docs/coordination/TODO_GUIDE.md#t7)：游标、去重、修正/轮转和完整扫描一致性
 - [ ] [T8–T9 数据管理](docs/coordination/TODO_GUIDE.md#t8)：备份/恢复/清除/应用数据目录迁移、归档导入、多设备和独立数据集
-- [ ] [T10–T11 统计扩展](docs/coordination/TODO_GUIDE.md#t10)：系统时区跟随、自定义日期和可信项目维度
+- [ ] [T10–T11 统计扩展](docs/coordination/TODO_GUIDE.md#t10)：系统时区跟随（本地实现完成，待 CI 与真机验证）、自定义日期和可信项目维度
 - [ ] [T12 桌面体验](docs/coordination/TODO_GUIDE.md#t12)：托盘、开机启动、通知、经验证的自动更新
 - [ ] [T13–T15 来源扩展](docs/coordination/TODO_GUIDE.md#t13)：Antigravity conversation .pb、可信订阅额度、ChatGPT Web/DeepSeek Harness/Cowork 与可选同步
 - [ ] [T16 诊断展示](docs/coordination/TODO_GUIDE.md#t16)：可信采集版本和可获得的细进度，保留已有状态订阅

@@ -20,6 +20,19 @@ describe('statistics follow the selected local calendar', () => {
     vi.setSystemTime(new Date('2026-10-05T07:00:00Z'));
     expect(todayInTimezone('America/Phoenix')).toBe('2026-10-05');
   });
+  it('derives today and every preset from the effective zone at a midnight boundary', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-05T06:30:00Z'));
+    const phoenix = todayInTimezone('America/Phoenix'); const tokyo = todayInTimezone('Asia/Tokyo');
+    expect(phoenix).toBe('2026-10-04'); expect(tokyo).toBe('2026-10-05');
+    expect(rangeForPreset(phoenix, 'today')).toEqual({ start: '2026-10-04', end: '2026-10-05' });
+    expect(rangeForPreset(tokyo, 'today')).toEqual({ start: '2026-10-05', end: '2026-10-06' });
+    expect(rangeForPreset(phoenix, 'week')).toEqual({ start: '2026-09-28', end: '2026-10-05' });
+    expect(rangeForPreset(tokyo, 'week')).toEqual({ start: '2026-10-05', end: '2026-10-06' });
+    expect(rangeForPreset(phoenix, 'last30')).toEqual({ start: '2026-09-05', end: '2026-10-05' });
+    expect(rangeForPreset(tokyo, 'last30')).toEqual({ start: '2026-09-06', end: '2026-10-06' });
+    expect(rangeForPreset(phoenix, 'month')).toEqual(rangeForPreset(tokyo, 'month'));
+  });
   it('uses the operating system zone instead of a fixed city', () => {
     vi.spyOn(Intl, 'DateTimeFormat').mockReturnValue({ resolvedOptions: () => ({ timeZone: 'Europe/Berlin' }) } as Intl.DateTimeFormat);
     expect(systemTimezone()).toBe('Europe/Berlin');

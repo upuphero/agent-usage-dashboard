@@ -13,7 +13,7 @@
 | 已实现 / 已通过 | 仍未完成 |
 | --- | --- |
 | 三个本地来源、完整 Daily/Session/SQLite、日周月/模型/会话统计与字段质量、来源开关/目录/设置 revision、手动扫描与导出 | 真正增量、用户备份/恢复/清除/应用数据迁移、归档导入/多设备/独立数据集 |
-| 本地时区默认与旧 UTC 迁移、中文默认/英文切换、主题、自动完整扫描默认关闭/1/5/15、合并/限流/恢复/取消/退避/后台刷新 | 系统时区后续自动跟随、自定义日期 UI/项目维度、托盘/开机启动/通知/updater、.pb/可信 quota/更多来源 |
+| 本地时区默认与旧 UTC 迁移、中文默认/英文切换、主题、自动完整扫描默认关闭/1/5/15、合并/限流/恢复/取消/退避/后台刷新 | 系统时区自动跟随（0.0.8 分支本地实现，待 CI/真机）、自定义日期 UI/项目维度、托盘/开机启动/通知/updater、.pb/可信 quota/更多来源 |
 | 67 前端、16 Node/SQL、43 Linux Rust；两平台各 75 默认 + 5 native + 安装后重复 5 native、严格 clippy、安装器和 SHA 校验 | 真实桌面 UI/IPC、硬件睡眠、干净机/用户数据升级/最低 OS、长期 Release、正式签名/公证、完整 notices |
 
 [当前功能/优先级/完成出口](docs/coordination/REMAINING_WORK.md) · [TODO 的含义和例子](docs/coordination/TODO_GUIDE.md) · [0.0.7 实际 CI 与安装包证据](docs/ci-validation/auto-full-scan-v1.md)
@@ -858,3 +858,9 @@ fixture 采用最小合成数据或经过检查的脱敏数据，保留必要 us
 本地 67 项前端、16 项 Node/SQL、typecheck/lint/build、契约/边界/版本/格式检查和浏览器合成验收通过。本机 link.exe 缺失，未安装 MSVC/SDK；本次 Rust/clippy、两平台原生 fixture、真实休眠/安装与新包均待验证。未提交、推送或运行远程 CI；需本次用户另外确认。[具体设计、行为与验收出口](docs/ci-validation/auto-full-scan-v1.md)。
 
 2026-10-07 续验：用户已授权提交/推送、CI 验证与生成安装包。应用升级为 0.0.7；最终代码 465ac24ef7e99d5e465d5e9b495ce9d5672084b0 / run 37672597908 五个 jobs 全部成功。修复 macOS 原生监听目录别名匹配，67 前端、16 Node/SQL、43 Linux Rust、两平台各 75 默认和 5 native tests、安装后重复 5 native、严格 clippy、Windows NSIS/ZIP 与 Mac ARM64 DMG 安装/解压全部通过，三份安装包已下载并本地重算 SHA。真实 GUI、硬件休眠、升级/干净机/最低 OS 仍未验证；旧 tag/Release 与签名凭据未改。[最终证据与 SHA](docs/ci-validation/auto-full-scan-v1.md)。
+
+## 24. 系统时区跟随（T10）的本地开发记录
+
+2026-10-07，分支 `feat/follow-system-timezone`，基线 0.0.7 / API 1.2.0 / profile v4。实现“跟随系统 / 固定时区”两种持久模式：新配置跟随系统，v1–v4 迁移为固定并保留原时区；Rust 宿主原生检测 IANA 时区（启动、60 秒轮询、休眠恢复、窗口焦点），按身份而非偏移判断变化并规范化别名，失败保留最后有效时区。变化合并为最新目标，只在无活动扫描时应用；从原始日志串行重建已启用来源（自动采集关闭时由时区监控驱动，开启时由调度器新范围完成），不重新分桶旧 Daily，旧快照/身份保留，失败或取消退避并可在重启后继续。契约升级为 API 1.3.0（`getTimezone` / `updateTimezone` / `TIMEZONE_EVENT`），应用 0.0.8 / profile v5。
+
+本机没有 Rust 工具链，未安装 MSVC/SDK 或其他系统组件；Rust 代码只经过人工与多视角静态审查，编译、格式、测试、clippy、两平台原生/安装与真机验证均待用户授权后的现有 CI 和真机执行。未提交、推送或运行远程 CI。[设计、迁移与本地验证](docs/ci-validation/follow-system-timezone-v1.md)

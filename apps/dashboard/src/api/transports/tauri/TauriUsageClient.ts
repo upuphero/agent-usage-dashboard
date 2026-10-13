@@ -6,6 +6,7 @@ import {
   type ScanSummary, type OverviewQuery, type OverviewResult, type SessionQuery, type SessionPage,
   type ExportRequest, type ExportResult, type SettingsResult, type UpdateSettingsRequest, type ChooseProviderDirectoryResult,
   SCAN_EVENT, AUTO_COLLECTION_EVENT, type AutoCollectionStatus, type UpdateAutoCollectionRequest,
+  TIMEZONE_EVENT, type TimezoneStatus, type UpdateTimezoneRequest,
 } from '../../generated/usage';
 import { apiError, assertResponseVersion, normalizeError } from '../../protocol';
 import { waitForScan } from '../scan';
@@ -74,6 +75,8 @@ export class TauriUsageClient implements UsageClient {
   chooseProviderDirectory(providerId: string, language: 'zh' | 'en' = 'zh'): Promise<ChooseProviderDirectoryResult> { return this.settingsCommand('source-directory-selection', COMMANDS.chooseProviderDirectory, { providerId }, language); }
   getAutoCollection(): Promise<AutoCollectionStatus> { return this.settingsCommand('auto-full-scan', COMMANDS.getAutoCollection); }
   updateAutoCollection(request: UpdateAutoCollectionRequest): Promise<AutoCollectionStatus> { return this.settingsCommand('auto-full-scan', COMMANDS.updateAutoCollection, request); }
+  getTimezone(): Promise<TimezoneStatus> { return this.settingsCommand('timezone-follow-system', COMMANDS.getTimezone); }
+  updateTimezone(request: UpdateTimezoneRequest): Promise<TimezoneStatus> { return this.settingsCommand('timezone-follow-system', COMMANDS.updateTimezone, request); }
   async subscribeUsage(listener: (event: UsageEvent) => void): Promise<() => void> {
     const info = await this.getApiInfo();
     let closed = false; let connected = false; let connecting = false;
@@ -85,6 +88,8 @@ export class TauriUsageClient implements UsageClient {
       try {
         acquired.push(await this.events(SCAN_EVENT, payload => { if (!closed) listener({ kind: 'scan', scan: assertResponseVersion(payload as ScanSummary) }); }));
         if (info.capabilities.includes('auto-full-scan')) acquired.push(await this.events(AUTO_COLLECTION_EVENT, payload => { if (!closed) listener({ kind: 'auto', status: assertResponseVersion(payload as AutoCollectionStatus) }); }));
+        // Older hosts never emit this event; only listen when the capability was negotiated.
+        if (info.capabilities.includes('timezone-follow-system')) acquired.push(await this.events(TIMEZONE_EVENT, payload => { if (!closed) listener({ kind: 'timezone', status: assertResponseVersion(payload as TimezoneStatus) }); }));
         if (closed) acquired.forEach(remove => remove());
         else { removers.push(...acquired); connected = true; }
       } catch { acquired.forEach(remove => remove()); }

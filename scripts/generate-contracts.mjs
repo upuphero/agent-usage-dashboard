@@ -30,7 +30,7 @@ export function generate(source) {
     return `  ${camel(match[1])}: ${convert(match[2], parameter)};`;
   }).join('\n');
   let output = '// GENERATED from crates/usage-contracts/src/lib.rs. Do not edit.\n';
-  for (const name of ['API_VERSION', 'SCAN_EVENT', 'AUTO_COLLECTION_EVENT']) {
+  for (const name of ['API_VERSION', 'SCAN_EVENT', 'AUTO_COLLECTION_EVENT', 'TIMEZONE_EVENT']) {
     const match = new RegExp(`pub const ${name}: &str = ("[^"\\n]+")`).exec(source);
     if (!match) throw new Error(`Missing ${name}`); output += `export const ${name} = ${match[1]} as const;\n`;
   }

@@ -2,7 +2,9 @@
 
 ## 当前架构与交付状态（2026-10-07）
 
-应用 **0.0.7 / API 1.2.0 / profile v4**。三来源、完整快照/SQLite、设置与导出、本地时区/中文英文、自动完整扫描及后台 UI 刷新均已实现；两平台原生、安装与出包验证通过。[最终证据](../ci-validation/auto-full-scan-v1.md) · [剩余工作](REMAINING_WORK.md) · [TODO 含义](TODO_GUIDE.md)
+开发分支 `feat/follow-system-timezone`：应用 **0.0.8 / API 1.3.0 / profile v5**，增加系统时区跟随（下方“系统时区跟随”）；本地前端/Node/契约检查通过，Rust 尚未编译、两平台 CI 与真机未执行。[设计与本地验证](../ci-validation/follow-system-timezone-v1.md)
+
+已发布并验证的基线为应用 **0.0.7 / API 1.2.0 / profile v4**。三来源、完整快照/SQLite、设置与导出、本地时区/中文英文、自动完整扫描及后台 UI 刷新均已实现；两平台原生、安装与出包验证通过。[最终证据](../ci-validation/auto-full-scan-v1.md) · [剩余工作](REMAINING_WORK.md) · [TODO 含义](TODO_GUIDE.md)
 
 | 层 | 当前职责 |
 | --- | --- |
@@ -11,13 +13,16 @@
 | usage-core | 统计、完整快照权威/校验/提交与取消边界；新增 inspect/watch 端口，不实现真实文件、SQLite 或进程 IO |
 | usage-adapters | 原有三来源目录解析/白名单输入、metadata/身份/WAL 检查、规范化监听根、完整采集器、取消/超时/回收和 SQLite |
 | Tauri Runtime / Scheduler | 来源活动互斥、手动优先/任务合并；自动全局公平串行，单来源一个 pending、去抖/限流/退避、成功前指纹基线；独立恢复 pulse 与退出清理 |
-| profile / composition | 原子身份/设置持久化、v1–v3→v4 兼容迁移、系统时区默认、固定原生 sidecar 的实际注入与单实例 |
+| profile / composition | 原子身份/设置持久化、v1–v4→v5 兼容迁移（旧配置为固定时区）、新配置跟随系统时区、固定原生 sidecar 的实际注入与单实例 |
+| TimezoneMonitor（0.0.8 分支） | 原生 IANA 检测/别名规范化、启动/60 秒轮询/休眠恢复/窗口焦点触发、待切换目标合并、受扫描门禁保护的切换、重建驱动与退避、带序号的状态事件 |
 
 ```mermaid
 flowchart LR
   UI[Dashboard] --> Client[UsageClient]
   Client --> Host[Tauri commands / Runtime]
   Trigger[间隔 / 文件提示 / 恢复 / 配置] --> Scheduler[Rust Scheduler]
+  Zone[启动 / 轮询 / 恢复 / 焦点] --> Monitor[Rust TimezoneMonitor]
+  Monitor --> Host
   Scheduler --> Inspect[Core inspect/watch 端口]
   Inspect --> IO[Adapter 原生 IO]
   Scheduler --> Host
@@ -26,12 +31,21 @@ flowchart LR
   Core --> DB[Repository / SQLite]
   Host --> Events[扫描 / 自动状态事件]
   Scheduler --> Events
+  Monitor --> Events
   Events --> Client
 ```
 
 新增 inspect/watch 不改变 token、价格、dataset/device 身份或完整快照替换规则；文件事件只提示检查，三个 incremental 能力仍为 false。自动配置扫描中可保存，但来源/时区配置继续受活动扫描门禁保护。
 
 当前证据：67 前端、16 Node/SQL、43 Linux Rust；两平台各 75 默认、5 native 和安装后重复 5 native，严格 clippy、NSIS/portable/DMG 均通过。真实 WebView UI、硬件睡眠、干净机/升级/最低 OS、正式发布/签名与完整 notices 仍是待办。
+
+## 系统时区跟随（0.0.8 分支，2026-10-07）
+
+- **模式与持久化**：profile v5 增加 `timezoneMode`；`timezone` 仍是生效统计时区。新配置 follow-system；v1–v4 迁移为 fixed 并保留原时区（含明确 UTC）；身份、来源、自动配置与历史不变。旧宿主拒绝 v5。
+- **检测**：`timezone.rs` 定义 `SystemTimezone` 端口（生产为 `iana-time-zone`，测试注入可控实现，不读/改开发机时区），chrono-tz 校验并把 tzdata 旧拼写规范为单一身份。按 IANA 身份判断变化，DST 不是变化。失败保留最后有效时区并报告，重试不回退 UTC。
+- **驱动**：`TimezoneMonitor` 是第二个原生后台任务（5 秒 tick，60 秒检测轮询，休眠恢复与窗口焦点立即检测），只记录最新待切换目标；Runtime 在与设置写入相同的 `active` 门禁下应用（有活动扫描则等待），持久化时区、递增 revision、标记重建并重置调度器范围（指纹包含时区）。
+- **重建**：自动采集关闭时 Runtime 以 `Origin::Rebuild` 串行启动现有完整扫描（同样受原子门禁，不开启自动采集）；自动采集开启时由调度器的新范围完成，避免重复扫描。只读已启用来源，无启用来源直接完成。成功确认只接受当前目标时区；失败/取消保留历史并退避（60→900 秒，取消≥300 秒），持久标记支持重启恢复。
+- **状态与兼容**：API 1.3 `getTimezone`/`updateTimezone`/`TIMEZONE_EVENT`，状态与序号在同一锁内生成，前端按序号丢弃过期状态；旧 `updateSettings` 不同时区等价于固定选择。退出时先停止时区监控与调度器，再取消/回收任务。锁顺序：状态锁 → active → settings → configs；不在持有 settings/active 时获取状态锁。
 
 ## 初始集成历史（2026-10-04 起）
 

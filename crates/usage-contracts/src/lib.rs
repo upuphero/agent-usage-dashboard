@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: &str = "1.2.0";
+pub const API_VERSION: &str = "1.3.0";
 pub const SCAN_EVENT: &str = "usage://scan-updated";
 pub const AUTO_COLLECTION_EVENT: &str = "usage://auto-collection-updated";
+pub const TIMEZONE_EVENT: &str = "usage://timezone-updated";
 pub const COMMANDS: &[(&str, &str)] = &[
     ("getApiInfo", "get_api_info"),
     ("listProviders", "list_providers"),
@@ -17,6 +18,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("chooseProviderDirectory", "choose_provider_directory"),
     ("getAutoCollection", "get_auto_collection"),
     ("updateAutoCollection", "update_auto_collection"),
+    ("getTimezone", "get_timezone"),
+    ("updateTimezone", "update_timezone"),
 ];
 
 macro_rules! dto {
@@ -198,3 +201,26 @@ dto!(UpdateAutoCollectionRequest {
 });
 dto!(AutoProviderStatus { provider_id: String, state: AutoCollectionState, job_id: Option<String>, last_success_at: Option<String>, next_check_at: Option<String>, watching: bool, error: Option<ApiError> });
 dto!(AutoCollectionStatus { api_version: String, revision: String, config: AutoCollectionConfig, timezone: String, providers: Vec<AutoProviderStatus> });
+
+enumeration!(TimezoneMode, "kebab-case", FollowSystem, Fixed);
+enumeration!(
+    TimezoneRebuildState,
+    "kebab-case",
+    Idle,
+    Pending,
+    Rebuilding,
+    Backoff
+);
+enumeration!(
+    TimezoneProviderState,
+    "kebab-case",
+    Pending,
+    Rebuilding,
+    Succeeded,
+    Failed
+);
+// Fixed requires a valid IANA timezone; FollowSystem requires null and resolves in the host.
+dto!(UpdateTimezoneRequest { expected_revision: String, mode: TimezoneMode, timezone: Option<String> });
+dto!(TimezoneProviderStatus { provider_id: String, state: TimezoneProviderState, job_id: Option<String>, error: Option<ApiError> });
+// sequence is a decimal counter; clients ignore a status older than one already applied.
+dto!(TimezoneStatus { api_version: String, sequence: String, revision: String, mode: TimezoneMode, effective_timezone: String, system_timezone: Option<String>, detection_error: Option<ApiError>, pending_timezone: Option<String>, rebuild: TimezoneRebuildState, next_retry_at: Option<String>, providers: Vec<TimezoneProviderStatus> });

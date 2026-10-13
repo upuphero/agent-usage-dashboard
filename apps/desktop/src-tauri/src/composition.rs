@@ -264,4 +264,111 @@ mod tests {
             |snapshot| snapshot.revision == 3 && snapshot.origin_device_id == profile.device_id
         ));
     }
+    struct System;
+    impl crate::timezone::SystemTimezone for System {
+        fn detect(&self) -> Result<String, crate::timezone::DetectionError> {
+            Ok("UTC".into())
+        }
+    }
+    async fn daily(runtime: &crate::runtime::Runtime, zone: &str) -> (Vec<String>, Option<String>) {
+        let query = usage_contracts::OverviewQuery {
+            range: usage_contracts::DateRange {
+                start: "2026-10-02".into(),
+                end: "2026-10-06".into(),
+            },
+            timezone: zone.into(),
+            provider_ids: vec![],
+            model_ids: vec![],
+            bucket: usage_contracts::Bucket::Day,
+        };
+        let core = crate::mapping::overview_query(&query).unwrap();
+        let overview = runtime.service.get_overview(core).await.unwrap();
+        let result = crate::mapping::overview(overview, query);
+        let mut days = vec![];
+        for bucket in result.buckets {
+            let total = bucket.usage.tokens.total.value.unwrap_or_default();
+            if !total.is_empty() && total != "0" {
+                days.push(bucket.start);
+            }
+        }
+        (days, result.usage.tokens.total.value)
+    }
+    #[tokio::test]
+    #[ignore = "requires target-native pinned sidecar; rebuilds synthetic logs after a zone change"]
+    async fn following_a_new_system_zone_rebuilds_daily_buckets_from_source_logs() {
+        let binary = std::env::var_os("CCUSAGE_TEST_BINARY").expect("prepare pinned sidecar first");
+        let dir = tempfile::tempdir().unwrap();
+        let logs = dir.path().join("fixture logs/projects/synthetic");
+        std::fs::create_dir_all(&logs).unwrap();
+        // 06:59Z and 07:01Z fall on both sides of Phoenix midnight but on one UTC day.
+        std::fs::write(
+            logs.join("session-a.jsonl"),
+            include_bytes!(
+                "../../../../tests/fixtures/claude-code/logs/projects/synthetic/session-a.jsonl"
+            ),
+        )
+        .unwrap();
+        let mut profile = DesktopProfile::load_or_create(dir.path()).unwrap();
+        profile.claude_enabled = true;
+        profile.timezone = "America/Phoenix".into();
+        profile.timezone_mode = crate::profile::TimezoneMode::FollowSystem;
+        profile.claude_root_path = Some(dir.path().join("fixture logs").to_string_lossy().into());
+        profile.persist(dir.path()).unwrap();
+        let (service, configs, settings) = assemble(dir.path(), Path::new(&binary)).unwrap();
+        let runtime = crate::runtime::Runtime::new_with_settings(
+            service,
+            configs,
+            Arc::new(|_| {}),
+            Some(settings),
+        );
+        let manual = runtime
+            .start_scan(usage_contracts::StartScanRequest {
+                provider_id: "ccusage.claude-code".into(),
+                timezone: "America/Phoenix".into(),
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(90), async {
+            while !runtime
+                .get_scan(&manual.job_id)
+                .await
+                .unwrap()
+                .state
+                .is_terminal()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        runtime.wait_for_idle().await;
+        // Missing new-zone data stays unavailable; nothing is relabelled from Phoenix days.
+        assert_eq!(daily(&runtime, "UTC").await.1, None);
+        let monitor = crate::timezone::TimezoneMonitor::new(Arc::new(System), Arc::new(|_| {}));
+        runtime.timezone.set(monitor).ok().unwrap();
+        runtime.sync_timezone().await;
+        tokio::time::timeout(std::time::Duration::from_secs(90), async {
+            loop {
+                runtime.drive_timezone().await;
+                let status = runtime.get_timezone().await.unwrap();
+                if status.rebuild == usage_contracts::TimezoneRebuildState::Idle {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let (phoenix, phoenix_total) = daily(&runtime, "America/Phoenix").await;
+        let (utc, utc_total) = daily(&runtime, "UTC").await;
+        assert_eq!(phoenix, ["2026-10-03", "2026-10-04"]);
+        assert_eq!(utc, ["2026-10-04"]);
+        assert!(utc_total.is_some());
+        assert_eq!(utc_total, phoenix_total);
+        let stored = DesktopProfile::load_or_create(dir.path()).unwrap();
+        assert_eq!(stored.timezone, "UTC");
+        assert!(!stored.timezone_needs_rescan);
+        runtime.shutdown().await;
+        assert!(runtime.is_exit_ready());
+    }
 }

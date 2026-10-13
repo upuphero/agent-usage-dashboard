@@ -4,6 +4,7 @@ import {
   type OverviewQuery, type OverviewResult, type SessionQuery, type SessionPage, type ExportRequest,
   type ExportResult, type UsageAggregate, type SettingsResult, type UpdateSettingsRequest, type ChooseProviderDirectoryResult,
   type AutoCollectionStatus, type AutoCollectionConfig, type UpdateAutoCollectionRequest,
+  type ApiError, type TimezoneMode, type TimezoneRebuildState, type TimezoneProviderStatus, type TimezoneStatus, type UpdateTimezoneRequest,
 } from '../../generated/usage';
 import { apiError, assertApiVersion, assertResponseVersion } from '../../protocol';
 import { delay, isActiveScan, waitForScan } from '../scan';
@@ -18,6 +19,11 @@ export const DEMO_SCENARIOS = ['partial', 'stale', 'empty', 'error', 'loading', 
 export type DemoScenario = typeof DEMO_SCENARIOS[number];
 
 interface DemoJob { summary: ScanSummary; clock: number; timezone: string; automatic: boolean; generation: number }
+const REBUILD_RETRY_MS = 60_000;
+/** Host-style canonicalization (case and aliases); null for anything that is not an IANA zone. */
+function canonicalZone(zone: string): string | null {
+  try { return new Intl.DateTimeFormat('en-US', { timeZone: zone }).resolvedOptions().timeZone; } catch { return null; }
+}
 
 export class MockUsageClient implements UsageClient {
   private readonly jobs = new Map<string, DemoJob>();
@@ -38,8 +44,21 @@ export class MockUsageClient implements UsageClient {
     providers: PROVIDERS.map(provider => ({ providerId: provider.providerId, enabled: provider.enabled, directory: null })),
     collectionNotice: '演示设置只改变合成来源开关，不读取日志、不保存到磁盘。', directoryChangePolicy: 'preserve-dataset',
   };
+  // API 1.3 timezone state. settings.timezone is always the effective zone; rebuild jobs are tracked by provider jobId.
+  private timezoneMode: TimezoneMode = 'follow-system';
+  private systemZone: string | null = DEMO_TIMEZONE;
+  private detectionError: ApiError | null = null;
+  private pendingZone: string | null = null;
+  private rebuild: TimezoneRebuildState = 'idle';
+  private rebuildProviders: TimezoneProviderStatus[] = [];
+  private retryAt: number | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private timezoneSequence = 0n;
+  private timezoneSignature: string;
 
-  constructor(readonly scenario: DemoScenario = 'partial', private readonly latencyMs = 180, private readonly scanMs = 1500) {}
+  constructor(readonly scenario: DemoScenario = 'partial', private readonly latencyMs = 180, private readonly scanMs = 1500) {
+    this.timezoneSignature = JSON.stringify(this.timezoneStatus());
+  }
 
   private async readDelay(): Promise<void> { await delay(this.scenario === 'loading' ? 4000 : this.latencyMs); }
   private checkVersion(): void { assertApiVersion(this.scenario === 'version-mismatch' ? '2.0.0' : API_VERSION); }
@@ -114,17 +133,22 @@ export class MockUsageClient implements UsageClient {
         return { jobId: job.summary.jobId };
       }
     }
-    this.checkTimezone(request.timezone);
+    // Scans in the effective zone are accepted even when a simulated system zone has no synthetic data.
+    if (request.timezone === this.settings.timezone) this.checkVersion(); else this.checkTimezone(request.timezone);
     if (!this.settings.providers.find(provider => provider.providerId === request.providerId)!.enabled) throw apiError('PROVIDER_DISABLED', '该演示来源已关闭。');
+    return { jobId: this.createJob(request.providerId, request.timezone, automatic) };
+  }
+  private createJob(providerId: string, timezone: string, automatic: boolean): string {
     const jobId = `demo-scan-${++this.counter}`;
     this.jobs.set(jobId, {
-      clock: Date.now(), timezone: request.timezone, automatic, generation: this.generations.get(request.providerId) ?? 0,
-      summary: { apiVersion: API_VERSION, jobId, providerId: request.providerId, state: 'queued', startedAt: new Date().toISOString(), finishedAt: null, error: null, snapshotsReplaced: 0, rowsWritten: 0 },
+      clock: Date.now(), timezone, automatic, generation: this.generations.get(providerId) ?? 0,
+      summary: { apiVersion: API_VERSION, jobId, providerId, state: 'queued', startedAt: new Date().toISOString(), finishedAt: null, error: null, snapshotsReplaced: 0, rowsWritten: 0 },
     });
     this.emit({ kind: 'scan', scan: structuredClone(this.jobs.get(jobId)!.summary) });
-    this.completions.set(jobId, setTimeout(() => { this.completions.delete(jobId); this.readJob(jobId); void this.getAutoCollection().then(status => this.emit({ kind: 'auto', status })); }, this.scanMs));
-    return { jobId };
+    this.completions.set(jobId, setTimeout(() => { this.completions.delete(jobId); this.readJob(jobId); this.tick(); void this.getAutoCollection().then(status => this.emit({ kind: 'auto', status })); }, this.scanMs));
+    return jobId;
   }
+  private scanActive(): boolean { return [...this.jobs.values()].some(job => isActiveScan(this.readJob(job.summary.jobId))); }
   getScan(jobId: string): Promise<ScanSummary> {
     return waitForScan(async () => this.readJob(jobId), Math.max(1, this.latencyMs));
   }
@@ -136,6 +160,7 @@ export class MockUsageClient implements UsageClient {
       this.eligibleAt.set(summary.providerId, Date.now() + this.autoConfig.intervalMinutes * 60000);
       this.emit({ kind: 'scan', scan: structuredClone(job.summary) });
     }
+    this.tick();
   }
 
   async getOverview(query: OverviewQuery): Promise<OverviewResult> {
@@ -216,8 +241,10 @@ export class MockUsageClient implements UsageClient {
     return { apiVersion: API_VERSION, providerId, directory: { directoryRef, label: '合成演示目录 · 未打开系统选择器' } };
   }
   async updateSettings(request: UpdateSettingsRequest): Promise<SettingsResult> {
-    this.checkTimezone(request.timezone);
-    if ([...this.jobs.values()].some(job => isActiveScan(this.readJob(job.summary.jobId)))) throw apiError('SCAN_BUSY', '扫描期间不能修改设置。', true);
+    // Legacy write: the effective zone keeps the mode; a different zone means "fixed at that zone" (demo-zone rule applies).
+    const zone = request.timezone === this.settings.timezone ? request.timezone : canonicalZone(request.timezone) ?? request.timezone;
+    if (zone === this.settings.timezone) this.checkVersion(); else this.checkTimezone(zone);
+    if (this.scanActive()) throw apiError('SCAN_BUSY', '扫描期间不能修改设置。', true);
     if (request.expectedRevision !== this.settings.revision) throw apiError('SETTINGS_CONFLICT', '设置已变化，请重新读取。');
     this.checkProviders(request.providers.map(provider => provider.providerId));
     if (new Set(request.providers.map(provider => provider.providerId)).size !== request.providers.length) throw apiError('INVALID_QUERY', '来源设置重复。');
@@ -228,9 +255,11 @@ export class MockUsageClient implements UsageClient {
       target.enabled = update.enabled;
       target.directory = update.directoryRef === null ? null : { directoryRef: update.directoryRef, label: '合成演示目录 · 未读取日志' };
     }
-    next.revision = (BigInt(next.revision) + 1n).toString(); this.settings = next;
-    this.baselines.clear(); this.scheduleCheck();
-    return structuredClone(next);
+    next.revision = (BigInt(next.revision) + 1n).toString();
+    const moved = zone !== next.timezone; next.timezone = zone; this.settings = next;
+    if (moved) { this.timezoneMode = 'fixed'; this.resetRebuild(); }
+    this.baselines.clear(); this.scheduleCheck(); this.tick();
+    return structuredClone(this.settings);
   }
   private emit(event: UsageEvent) { for (const listener of this.listeners) listener(event); }
   /** Synthetic source edit for browser/transport acceptance. Never reads local files. */
@@ -246,7 +275,7 @@ export class MockUsageClient implements UsageClient {
   }
   private async checkAutomatically() {
     if (!this.autoConfig.enabled) return;
-    if (![...this.jobs.values()].some(job => isActiveScan(this.readJob(job.summary.jobId)))) {
+    if (!this.scanActive()) {
       const source = this.settings.providers.find(provider => provider.enabled && Date.now() >= (this.eligibleAt.get(provider.providerId) ?? 0)
         && this.baselines.get(provider.providerId) !== (this.generations.get(provider.providerId) ?? 0));
       if (source) await this.startScan({ providerId: source.providerId, timezone: this.settings.timezone }, true);
@@ -277,16 +306,91 @@ export class MockUsageClient implements UsageClient {
       for (const job of this.jobs.values()) if (job.automatic && isActiveScan(this.readJob(job.summary.jobId))) await this.cancelScan(job.summary.jobId);
       this.baselines.clear();
     } else { if (!wasEnabled) { this.baselines.clear(); this.eligibleAt.clear(); } this.scheduleCheck(); }
+    this.tick(); // shared revision changed
     const status = await this.getAutoCollection(); this.emit({ kind: 'auto', status }); return status;
   }
+  private timezoneStatus(sequence = '0'): TimezoneStatus {
+    return { apiVersion: API_VERSION, sequence, revision: this.settings.revision, mode: this.timezoneMode, effectiveTimezone: this.settings.timezone,
+      systemTimezone: this.systemZone, detectionError: structuredClone(this.detectionError), pendingTimezone: this.pendingZone, rebuild: this.rebuild,
+      nextRetryAt: this.retryAt === null ? null : new Date(this.retryAt).toISOString(), providers: structuredClone(this.rebuildProviders) };
+  }
+  /** Every computed status (response or event) gets a strictly larger sequence. */
+  private nextTimezoneStatus(): TimezoneStatus { this.timezoneSequence += 1n; return this.timezoneStatus(this.timezoneSequence.toString()); }
+  private bumpRevision() { this.settings.revision = (BigInt(this.settings.revision) + 1n).toString(); }
+  private clearRetry() { if (this.retryTimer !== undefined) { clearTimeout(this.retryTimer); this.retryTimer = undefined; } }
+  private armRetry() {
+    this.clearRetry();
+    if (this.retryAt !== null) this.retryTimer = setTimeout(() => { this.retryTimer = undefined; this.tick(); }, Math.max(0, this.retryAt - Date.now()));
+  }
+  /** One synthetic rebuild entry per enabled source; disabled sources are never read. */
+  private resetRebuild() {
+    this.rebuildProviders = this.settings.providers.filter(provider => provider.enabled).map(provider => ({ providerId: provider.providerId, state: 'pending', jobId: null, error: null }));
+    this.rebuild = this.rebuildProviders.length ? 'pending' : 'idle'; this.retryAt = null; this.clearRetry();
+  }
+  /** Reconciles detection, pending changes and the serial rebuild. Runs lazily on reads and from scan/retry timers. */
+  private tick() {
+    const busy = this.scanActive();
+    for (const provider of this.rebuildProviders) {
+      const scan = provider.state === 'rebuilding' && provider.jobId ? this.jobs.get(provider.jobId)?.summary : undefined;
+      if (!scan || isActiveScan(scan)) continue;
+      provider.jobId = null; provider.state = scan.state === 'succeeded' ? 'succeeded' : 'failed';
+      provider.error = scan.state === 'succeeded' ? null : scan.error ?? apiError('CANCELLED', '时区重建已取消；已有历史保留，稍后自动重试。', true);
+    }
+    if (this.rebuild !== 'backoff' && this.rebuildProviders.some(provider => provider.state === 'failed')) { this.rebuild = 'backoff'; this.retryAt = Date.now() + REBUILD_RETRY_MS; this.armRetry(); }
+    if (this.rebuild === 'backoff' && this.retryAt !== null && Date.now() >= this.retryAt) {
+      this.rebuild = 'pending'; this.retryAt = null; this.clearRetry();
+      for (const provider of this.rebuildProviders) if (provider.state === 'failed') { provider.state = 'pending'; provider.error = null; }
+    }
+    // Follow-system changes apply only while no scan is active; rapid changes coalesce to the latest detection.
+    const target = this.timezoneMode === 'follow-system' && this.systemZone !== this.settings.timezone ? this.systemZone : null;
+    this.pendingZone = target !== null && busy ? target : null;
+    if (target !== null && !busy) { this.settings.timezone = target; this.bumpRevision(); this.resetRebuild(); }
+    if (this.rebuild !== 'idle') {
+      const enabled = this.settings.providers.filter(provider => provider.enabled);
+      this.rebuildProviders = enabled.map(({ providerId }) => this.rebuildProviders.find(provider => provider.providerId === providerId) ?? { providerId, state: 'pending', jobId: null, error: null });
+      const next = busy || this.rebuild === 'backoff' ? undefined : this.rebuildProviders.find(provider => provider.state === 'pending');
+      if (next) { next.jobId = this.createJob(next.providerId, this.settings.timezone, false); next.state = 'rebuilding'; }
+      if (this.rebuild !== 'backoff' || !this.rebuildProviders.length) {
+        this.rebuild = this.rebuildProviders.some(provider => provider.state === 'rebuilding') ? 'rebuilding' : this.rebuildProviders.some(provider => provider.state !== 'succeeded') ? 'pending' : 'idle';
+      }
+      if (this.rebuild === 'idle') { this.rebuildProviders = []; this.retryAt = null; this.clearRetry(); }
+    }
+    const signature = JSON.stringify(this.timezoneStatus());
+    if (signature !== this.timezoneSignature) { this.timezoneSignature = signature; this.emit({ kind: 'timezone', status: this.nextTimezoneStatus() }); }
+  }
+  async getTimezone(): Promise<TimezoneStatus> { this.checkVersion(); await delay(this.latencyMs); this.tick(); return this.nextTimezoneStatus(); }
+  async updateTimezone(request: UpdateTimezoneRequest): Promise<TimezoneStatus> {
+    this.checkVersion(); await delay(this.latencyMs);
+    const zone = request.mode === 'fixed' && typeof request.timezone === 'string' ? canonicalZone(request.timezone) : null;
+    if (request.mode === 'fixed' ? zone === null : request.mode !== 'follow-system' || request.timezone !== null) throw apiError('INVALID_QUERY', '时区设置无效：固定时区需要有效的 IANA 时区，跟随系统时不能指定时区。');
+    if (request.expectedRevision !== this.settings.revision) throw apiError('SETTINGS_CONFLICT', '设置已变化，请重新读取。');
+    this.tick();
+    if (zone !== null && zone !== this.settings.timezone) {
+      this.checkTimezone(zone);
+      if (this.scanActive()) throw apiError('SCAN_BUSY', '扫描期间不能更改统计时区，请等待扫描完成。', true);
+    }
+    if (request.mode !== this.timezoneMode) { this.timezoneMode = request.mode; this.bumpRevision(); }
+    if (zone !== null && zone !== this.settings.timezone) { this.settings.timezone = zone; this.bumpRevision(); this.resetRebuild(); }
+    this.tick();
+    return this.nextTimezoneStatus();
+  }
+  /** Synthetic OS timezone change for browser/transport acceptance. Never reads the real system zone. */
+  simulateSystemTimezone(zone: string) {
+    const detected = canonicalZone(zone);
+    if (detected === null) { this.simulateDetectionFailure(); return; }
+    this.systemZone = detected; this.detectionError = null; this.tick();
+  }
+  /** Detection failure keeps the effective zone (never silently UTC) and reports the error. */
+  simulateDetectionFailure() { this.detectionError = apiError('INTERNAL', '无法检测系统时区；继续使用当前统计时区，稍后自动重试。', true); this.tick(); }
   async subscribeUsage(listener: (event: UsageEvent) => void): Promise<() => void> {
     this.listeners.add(listener); listener({ kind: 'resync' }); this.scheduleCheck();
     for (const [id, job] of this.jobs) if (isActiveScan(job.summary) && !this.completions.has(id)) {
-      this.completions.set(id, setTimeout(() => { this.completions.delete(id); this.readJob(id); }, Math.max(0, this.scanMs - (Date.now() - job.clock))));
+      this.completions.set(id, setTimeout(() => { this.completions.delete(id); this.readJob(id); this.tick(); }, Math.max(0, this.scanMs - (Date.now() - job.clock))));
     }
+    if (this.rebuild === 'backoff' && this.retryTimer === undefined) this.armRetry();
     return () => { this.listeners.delete(listener); if (this.listeners.size === 0) {
       if (this.autoTimer !== undefined) { clearTimeout(this.autoTimer); this.autoTimer = undefined; }
-      for (const timer of this.completions.values()) clearTimeout(timer); this.completions.clear();
+      for (const timer of this.completions.values()) clearTimeout(timer); this.completions.clear(); this.clearRetry();
     } };
   }
 }
