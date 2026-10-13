@@ -6,6 +6,13 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use usage_core::*;
 
+fn normalization_version(kind: AgentKind) -> &'static str {
+    match kind {
+        AgentKind::Codex => "codex-2",
+        AgentKind::Antigravity => "antigravity-1",
+    }
+}
+
 pub struct AgentAdapter {
     kind: AgentKind,
     runner: ProcessRunner,
@@ -145,7 +152,11 @@ impl UsageSource for AgentAdapter {
                 &roots,
                 &dataset,
                 &request.timezone,
-                &format!("{}-1|{}", kind.product(), crate::process::COLLECTOR_VERSION),
+                &format!(
+                    "{}|{}",
+                    normalization_version(kind),
+                    crate::process::COLLECTOR_VERSION
+                ),
                 &cancellation,
             )
         })
@@ -220,7 +231,7 @@ impl UsageSource for AgentAdapter {
             )?;
             snapshot.provider_id = kind.provider().into();
             snapshot.key.product_id = kind.product().into();
-            snapshot.normalization_version = format!("{}-1", kind.product());
+            snapshot.normalization_version = normalization_version(kind).into();
             snapshot
                 .warnings
                 .retain(|warning| warning != "REASONING_UNAVAILABLE");

@@ -1,8 +1,9 @@
 //! Immutable, usage-only collection inputs. Never copies authentication or conversation bodies.
 use crate::{process::io_error, AgentKind};
 use rusqlite::{params, Connection, OpenFlags};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
+    collections::HashSet,
     fs::{self, File, FileTimes},
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -137,6 +138,9 @@ fn capture_codex(
     let length = file.metadata().map_err(io_error)?.len();
     let mut reader = BufReader::new(file.take(length));
     let mut output = File::create(destination).map_err(io_error)?;
+    let mut responses = HashSet::new();
+    let mut pending_summary = false;
+    let mut record_turn = None;
     loop {
         cancel.check()?;
         let mut line = Vec::new();
@@ -154,7 +158,7 @@ fn capture_codex(
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let value: Value = match serde_json::from_slice(&line) {
+        let mut value: Value = match serde_json::from_slice(&line) {
             Ok(value) => value,
             Err(_)
                 if !line.ends_with(b"\n")
@@ -165,6 +169,51 @@ fn capture_codex(
             }
             Err(_) => return Err(CoreError::CoverageIncomplete),
         };
+        if value.get("type").and_then(Value::as_str) == Some("token_usage_record")
+            && value
+                .pointer("/payload/usage")
+                .is_some_and(Value::is_object)
+        {
+            // New desktop logs record each response before a legacy token_count summary.
+            // That summary can stay stale after compaction; the response is authoritative.
+            pending_summary = true;
+            record_turn = value.pointer("/payload/turn_id").cloned();
+            if let Some(id) = value
+                .pointer("/payload/response_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                if !responses.insert(id.to_owned()) {
+                    continue;
+                }
+            }
+            let mut payload = selected(&value["payload"], &["model", "model_name"]);
+            payload["type"] = json!("token_count");
+            payload["info"] = json!({"last_token_usage": value["payload"]["usage"]});
+            if let Some(total) = value
+                .pointer("/payload/thread_token_usage")
+                .filter(|u| u.is_object())
+            {
+                payload["info"]["total_token_usage"] = total.clone();
+            }
+            value =
+                json!({"type": "event_msg", "timestamp": value["timestamp"], "payload": payload});
+        } else if pending_summary {
+            let entry = value.get("type").and_then(Value::as_str);
+            let event = value.pointer("/payload/type").and_then(Value::as_str);
+            if entry == Some("event_msg") && event == Some("token_count") {
+                // Quota-only notifications do not consume the paired usage summary.
+                if value.pointer("/payload/info").is_some_and(Value::is_object) {
+                    pending_summary = false;
+                    continue;
+                }
+            } else if (entry == Some("event_msg") && event == Some("task_started"))
+                || (entry == Some("turn_context")
+                    && value.pointer("/payload/turn_id") != record_turn.as_ref())
+            {
+                pending_summary = false;
+            }
+        }
         let entry = value.get("type").and_then(Value::as_str).unwrap_or("");
         let event = value
             .pointer("/payload/type")
@@ -496,5 +545,69 @@ mod tests {
         assert!(captured.missing[2]);
         assert!(captured.missing[4]);
         assert!(captured.nonzero_usage);
+    }
+
+    #[test]
+    fn codex_response_snapshot_pairs_summaries_and_retains_legacy_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("archived_sessions")).unwrap();
+        let usage = json!({"input_tokens": 100, "cached_input_tokens": 20,
+            "cache_write_input_tokens": 0, "output_tokens": 30,
+            "reasoning_output_tokens": 10, "total_tokens": 130});
+        let record = json!({"type": "token_usage_record", "timestamp": "2026-10-08T12:00:00Z",
+            "payload": {"response_id": "response-one", "turn_id": "turn-one",
+                "usage": usage, "thread_token_usage": usage, "text": "SECRET_BODY"}});
+        let summary = json!({"type": "event_msg", "timestamp": "2026-10-08T12:00:00Z",
+            "payload": {"type": "token_count", "info": {"last_token_usage": usage}}});
+        let entries = [
+            record.clone(),
+            json!({"type": "event_msg", "payload": {"type": "token_count", "info": null}}),
+            json!({"type": "turn_context", "payload": {"turn_id": "turn-one", "model": "gpt-5"}}),
+            summary.clone(),
+            record,
+            summary.clone(),
+            json!({"type": "token_usage_record", "timestamp": "2026-10-08T13:00:00Z",
+                "payload": {"response_id": "response-two", "turn_id": "turn-one", "usage": usage}}),
+            // A new turn without a paired summary must keep its legacy usage.
+            json!({"type": "turn_context", "payload": {"turn_id": "turn-two", "model": "gpt-5"}}),
+            summary,
+        ];
+        fs::write(
+            dir.path().join("archived_sessions/session.jsonl"),
+            entries
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let captured = capture(
+            AgentKind::Codex,
+            &[dir.path().into()],
+            &CancellationToken::default(),
+        )
+        .unwrap();
+        let text =
+            fs::read_to_string(captured.roots[0].join("archived_sessions/session.jsonl")).unwrap();
+        assert!(!text.contains("SECRET"));
+        assert!(!text.contains("token_usage_record"));
+        assert_eq!(captured.missing, [false; 6]);
+        assert!(captured.nonzero_usage);
+        let events: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let usage_events: Vec<_> = events
+            .iter()
+            .filter(|v| v.pointer("/payload/info/last_token_usage").is_some())
+            .collect();
+        assert_eq!(usage_events.len(), 3);
+        assert_eq!(
+            usage_events[0]["payload"]["info"]["total_token_usage"],
+            usage
+        );
+        assert!(usage_events[1]
+            .pointer("/payload/info/total_token_usage")
+            .is_none());
     }
 }
